@@ -1,0 +1,13 @@
+numpy>=1.19.0
+pyyaml>=5.1.0
+tqdm>=4.42.0
+h5py>=3.1.0
+hdf5plugin
+opencv-python>=4.5.0
+pandas>=2.2.0
+pillow>=10.4.0
+pytorch-lightning>=2.2.5
+matplotlib
+imageio[ffmpeg]
+prettytable
+scipy

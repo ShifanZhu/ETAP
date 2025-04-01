@@ -1,0 +1,13 @@
+common:
+  dataset_path: data/eds
+  num_events: 800000
+  height: 480
+  width: 640
+  save_prefix: v1
+  
+event_representation:
+  representation_name: event_stack
+  num_stacks: 10
+  interpolation: bilinear
+  channel_overlap: true
+  centered_channels: false

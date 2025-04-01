@@ -1,0 +1,20 @@
+common:
+  exp_name: tap_e2d2
+  height: 512
+  width: 512
+  ckp_path: weights/ETAP_v1_cvpr25.pth
+  add_support_points: true
+  support_point_stride: 20
+
+data:
+  data_root: data/e2d2
+  dataset_name: e2d2
+  preprocessed_name: event_stack_v1
+  sequences:
+    - 231025_110210_fidget5_high_exposure
+
+model:
+  num_in_channels: 10
+  stride: 4
+  window_len: 8
+  num_virtual_tracks: 64

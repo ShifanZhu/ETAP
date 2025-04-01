@@ -1,0 +1,15 @@
+common:
+  dataset_path: data/event_kubric/test
+  num_events: 400000
+  sequence_length: 24
+  height: 512
+  width: 512
+  save_prefix: v1
+  create_time_inverted: false
+
+event_representation:
+  representation_name: event_stack
+  num_stacks: 10
+  interpolation: bilinear
+  channel_overlap: true
+  centered_channels: false

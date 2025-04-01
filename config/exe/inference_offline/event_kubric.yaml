@@ -1,0 +1,18 @@
+common:
+  height: 512
+  width: 512
+  exp_name: event_kubric
+  checkpoint: weights/ETAP_v1_cvpr25.pth
+
+model:
+  num_in_channels: 10
+  stride: 4
+  window_len: 8
+  num_virtual_tracks: 64
+
+data:
+  data_root: data/event_kubric
+  dataset_name: event_kubric
+  preprocessed_name: event_stack_v1
+  seq_len: 24
+  traj_per_sample: 500

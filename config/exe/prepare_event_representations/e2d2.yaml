@@ -1,0 +1,16 @@
+common:
+  height: 480
+  width: 640
+  save_prefix: v1
+  num_events: 200000
+  data_root: data/e2d2
+  sequences:
+    - 231025_110210_fidget5_high_exposure
+
+event_representation:
+  representation_name: event_stack
+  num_stacks: 10
+  interpolation: bilinear
+  channel_overlap: true
+  centered_channels: false
+  image_shape: [480, 640]

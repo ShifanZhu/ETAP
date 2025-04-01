@@ -1,0 +1,14 @@
+common:
+  data_path: data/evimo2
+  sample_config: config/misc/evimo2/val_samples.csv
+  num_events: 60000
+  height: 480
+  width: 640
+  save_prefix: v1
+
+event_representation:
+  representation_name: event_stack
+  num_stacks: 10
+  interpolation: bilinear
+  channel_overlap: true
+  centered_channels: false

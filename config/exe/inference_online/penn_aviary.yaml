@@ -1,0 +1,36 @@
+common:
+  exp_name: qualitative_penn_aviary
+  height: 480
+  width: 640
+  ckp_path: weights/ETAP_v1_cvpr25.pth
+  add_support_points: false
+
+data:
+  data_root: data/penn_aviary
+  dataset_name: penn_aviary
+  load_rgb: false
+  sequences:
+    - 231018_174107_view2
+
+  repr_config:
+    representation_name: event_stack
+    num_stacks: 10
+    interpolation: bilinear
+    channel_overlap: true
+    centered_channels: false
+    image_shape: [480, 640]  # Height and width of data, in common is for inference
+
+  sequence_data:
+    231018_174107_view2:
+      start_time_s: 2.7099975  # frame 35
+      duration_s: 0.5
+      step_time_s: 0.0033
+      num_events: 200000
+      query_stride: 8
+      mask_name: mask00082.png
+
+model:
+  num_in_channels: 10
+  stride: 4
+  window_len: 8
+  num_virtual_tracks: 64

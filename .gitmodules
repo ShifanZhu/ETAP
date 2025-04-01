@@ -1,0 +1,6 @@
+[submodule "data_pipeline/rpg_vid2e"]
+	path = data_pipeline/rpg_vid2e
+	url = git@github.com:filbert14/rpg_vid2e.git
+[submodule "data_pipeline/kubric"]
+	path = data_pipeline/kubric
+	url = git@github.com:filbert14/kubric.git
