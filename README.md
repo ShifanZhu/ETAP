@@ -75,7 +75,7 @@ The quickest way to try ETAP is using our demo:
    cd ETAP
    ```
 
-2. Download [the model weights](https://drive.google.com/file/d/18KEHoK7jfTQ5LrOKplDv7HiFpBhM92d7/view?usp=drive_link) and save to `weights/ETAP_v1_cvpr25.pth`
+2. Download [the model weights](https://drive.google.com/file/d/18mnwu8CsrVJvDXeRtvU0Wgp6shdxn0HD/view?usp=drive_link) and save to `weights/ETAP_v1_cvpr25.pth`
 3. Download [the demo example](https://drive.google.com/drive/folders/1d5Yi1q6ZFom3Q_VrELzXjrxE5aC2ezOk?usp=drive_link) (30MB) and extract to `data/demo_example`
 4. Run the demo:
    ```bash
