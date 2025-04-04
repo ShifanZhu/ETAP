@@ -132,7 +132,7 @@ def process_eds_subsequence(subsequence_name, config, args, save_name, camera_ma
     with h5py.File(events_path, 'r') as f:
         x = f['x']
         y = f['y']
-        t = f['t'][:] * 1e6 if not args.use_rectified else f['t']
+        t = f['t'][:]
         p = f['p']
         ev_indices = np.searchsorted(t, timestamps_us)
         for time, ev_index in tqdm(zip(timestamps_us, ev_indices), total=len(timestamps_us),

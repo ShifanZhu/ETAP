@@ -122,6 +122,10 @@ To reproduce the paper results, use the model `ETAP_v1_cvpr25.pth`.
 
 ##### Download EDS (Prophesee Gen3 640 x 480 px)
 
+The four evaluation sequences of the "Event-aided Direct Sparse Odometry Dataset" (EDS) can be downloaded in two ways:
+
+**Option 1**
+
 Download the four evaluation sequences of the "Event-aided Direct Sparse Odometry Dataset" (EDS) from the [official web page](https://rpg.ifi.uzh.ch/eds.html):
 
 * `01_peanuts_light`
@@ -129,7 +133,12 @@ Download the four evaluation sequences of the "Event-aided Direct Sparse Odometr
 * `08_peanuts_running`
 * `14_ziggy_in_the_arena`
 
-Choose the pocolog option, which contains the events as an hdf5 file. Place all sequences in a common folder.
+Choose the archive file option, which contains the events as an hdf5 file. Place all sequences in a common folder.
+
+**Option 2:** Use our download script:
+```bash
+bash scripts/download_eds.sh
+```
 
 We also use the calibration data provided by EDS. No action is required, as it is included in this repository at `config/misc/eds/calib.yaml`. This is the same file as in the `00_calib` results from the official source.
 
