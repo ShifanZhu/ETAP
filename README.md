@@ -1,4 +1,4 @@
-# ETAP: Event-based Tracking of Any Point
+# ETAP: Event-based Tracking of Any Point (CVPR'25 Highlight)
 
 [![Paper](https://img.shields.io/badge/arXiv-2409.03358-b31b1b.svg)](https://arxiv.org/pdf/2412.00133)
 [![Data](https://img.shields.io/badge/Dataset-GoogleDrive-4285F4.svg)](https://drive.google.com/drive/folders/1Mprj-vOiTP5IgXE9iuu4-4bazcZUswpp?usp=drive_link)
@@ -7,7 +7,7 @@
 
 ## Introduction
 
-This is the official repository for [**ETAP: Event-based Tracking of Any Point**](https://arxiv.org/pdf/2412.00133), accepted at **CVPR 2025**, by [Friedhelm Hamann](https://friedhelmhamann.github.io/), [Daniel Gehrig](https://danielgehrig18.github.io/), [Filbert Febryanto](https://github.com/filbert14), [Kostas Daniilidis](https://www.cis.upenn.edu/~kostas/) and [Guillermo Gallego](http://www.guillermogallego.es/).
+This is the official repository for [**ETAP: Event-based Tracking of Any Point**](https://arxiv.org/pdf/2412.00133), by [Friedhelm Hamann](https://friedhelmhamann.github.io/), [Daniel Gehrig](https://danielgehrig18.github.io/), [Filbert Febryanto](https://github.com/filbert14), [Kostas Daniilidis](https://www.cis.upenn.edu/~kostas/) and [Guillermo Gallego](http://www.guillermogallego.es/).
 
 <p align="center">
  <a href="https://youtu.be/LaeA9WJ7ptc">
