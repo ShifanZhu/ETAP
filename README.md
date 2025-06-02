@@ -1,6 +1,7 @@
 # ETAP: Event-based Tracking of Any Point (CVPR'25 Highlight)
 
 [![Paper](https://img.shields.io/badge/arXiv-2409.03358-b31b1b.svg)](https://arxiv.org/pdf/2412.00133)
+[![Poster](https://img.shields.io/badge/Poster-PDF-FF6B6B.svg)](docs/etap_cvpr25_poster.pdf)
 [![Data](https://img.shields.io/badge/Dataset-GoogleDrive-4285F4.svg)](https://drive.google.com/drive/folders/1Mprj-vOiTP5IgXE9iuu4-4bazcZUswpp?usp=drive_link)
 [![Video](https://img.shields.io/badge/Video-YouTube-FF0000.svg?style=flat&labelColor=444444&color=FF0000)](https://youtu.be/LaeA9WJ7ptc)
 [![License](https://img.shields.io/badge/License-CC_BY--NC_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
