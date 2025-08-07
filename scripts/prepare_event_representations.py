@@ -159,6 +159,56 @@ def process_eds_subsequence(subsequence_name, config, args, save_name, camera_ma
     
     print(f'Done processing {subsequence_name}.')
 
+
+def process_cear_subsequence(subsequence_name, config, args, save_name, camera_matrix, distortion_coeffs, homography, converter):
+    """Process a subsequence for the CEAR dataset."""
+    dataset_path = config['common']['dataset_path']
+    repr_name = config['event_representation']['representation_name']
+    num_events = config['common']['num_events'] if repr_name == 'event_stack' else None
+    t_delta_s = config['common'].get('t_delta') if repr_name == 'voxel_grid' else None
+
+    seq_root = os.path.join(dataset_path, subsequence_name)
+    out_path = os.path.join(seq_root, 'events', save_name)
+    os.makedirs(out_path, exist_ok=True)
+
+    gt_path = os.path.join('config/misc/eds/gt_tracks', f'{subsequence_name}.gt.txt')
+    gt_tracks = np.genfromtxt(gt_path)  # [id, t, x, y]
+    timestamps_us = (1e6 * np.unique(gt_tracks[:, 1])).astype(np.int64)
+
+    if args.use_rectified:
+        events_path = os.path.join(seq_root, 'events_corrected.h5')
+    else:
+        events_path = os.path.join(seq_root, 'events.h5')
+    with h5py.File(events_path, 'r') as f:
+        x = f['x']
+        y = f['y']
+        t = f['t'][:]
+        p = f['p']
+        ev_indices = np.searchsorted(t, timestamps_us)
+        for time, ev_index in tqdm(zip(timestamps_us, ev_indices), total=len(timestamps_us),
+                                  desc=subsequence_name):
+            if repr_name == 'event_stack':
+                i_start = max(ev_index - num_events, 0)
+            elif repr_name == 'voxel_grid':
+                t_delta = t_delta_s * 1e6  # Convert to microseconds
+                t_start = time - t_delta
+                i_start = np.searchsorted(t, t_start)
+            else:
+                raise ValueError(f'Unknown representation name: {repr_name}')
+            
+            events = np.stack([y[i_start:ev_index], x[i_start:ev_index],
+                              t[i_start:ev_index], p[i_start:ev_index]], axis=1)
+            ev_repr = converter(events)
+
+            if not args.use_rectified:
+                ev_repr = undistort_voxel_representation(ev_repr, camera_matrix,
+                                                       distortion_coeffs)
+                ev_repr = warp_voxel_representation(ev_repr, homography)
+
+            np.save(os.path.join(out_path, f'{time}.npy'), ev_repr)
+    
+    print(f'Done processing {subsequence_name}.')
+
 def process_ec_subsequence(subsequence_name, config, converter):
     """Process a subsequence for the EC dataset."""
     dataset_path = config['common']['dataset_path']
@@ -440,6 +490,38 @@ def process_eds_dataset(config, args):
             process_eds_subsequence(subsequence_name, config, args, save_name, camera_matrix, 
                                   distortion_coeffs, homography, converter)
 
+
+def process_cear_dataset(config, args):
+    """Process the entire CEAR dataset."""
+    rep_config = config['event_representation']
+    rep_name = rep_config['representation_name']
+    save_name = f'{rep_name}_{config["common"]["save_prefix"]}'
+    converter = EventRepresentationFactory.create(rep_config)
+
+    if not args.use_rectified:
+        calib_path = 'config/misc/cear/calib.yaml'
+
+        with open(calib_path, "r") as f:
+            calib_data = yaml.safe_load(f)
+            homography = homography_from_kalibr(calib_data)
+            camera_matrix = kalibr_calib2camera_matrix('cam1', calib_data)
+            distortion_coeffs = np.array(calib_data['cam1']['distortion_coeffs'])
+    else:
+        calib_data = camera_matrix = distortion_coeffs = homography = None
+
+    if args.parallel:
+        with mp.Pool(processes=args.num_workers) as pool:
+            subsequence_args = [
+                (subsequence_name, config, args, save_name, camera_matrix, distortion_coeffs, homography, converter)
+                for subsequence_name in SUPPORTED_SEQUENCES_FEATURE_TRACKING['eds']
+            ]
+
+            pool.starmap(process_eds_subsequence, subsequence_args)
+    else:
+        for subsequence_name in SUPPORTED_SEQUENCES_FEATURE_TRACKING['eds']:
+            process_eds_subsequence(subsequence_name, config, args, save_name, camera_matrix, 
+                                  distortion_coeffs, homography, converter)
+
 def process_ec_dataset(config, args):
     """Process the entire EC dataset."""
     rep_config = config['event_representation']
@@ -595,6 +677,8 @@ def main():
         process_evimo_dataset(config, args)
     elif args.dataset == 'e2d2':
         process_e2d2_dataset(config, args)
+    elif args.dataset == 'cear':
+        process_cear_dataset(config, args)
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
 

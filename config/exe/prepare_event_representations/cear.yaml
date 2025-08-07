@@ -1,0 +1,13 @@
+common:
+  dataset_path: data/cear
+  num_events: 100000
+  height: 260
+  width: 346
+  save_prefix: v1
+  
+event_representation:
+  representation_name: event_stack
+  num_stacks: 10
+  interpolation: bilinear
+  channel_overlap: true
+  centered_channels: false

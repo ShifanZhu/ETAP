@@ -13,6 +13,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 from src.data.modules import DataModuleFactory
 from src.model.etap.model import Etap
 from src.utils import Visualizer, normalize_and_expand_channels, make_grid
+import cv2
+import datetime
 
 torch.set_float32_matmul_precision('high')
 
@@ -101,6 +103,7 @@ def main():
         
         if add_support_points:
             support_query_xy = torch.from_numpy(make_grid(height, width, stride=support_point_stride)).float().to(device)
+            print(f"Support points shape: {support_query_xy}")
             support_num_queries = support_query_xy.shape[0]
             
             support_query_t = torch.zeros(support_num_queries, dtype=torch.int64, device=device)
@@ -111,6 +114,10 @@ def main():
         else:
             queries = original_queries
             support_num_queries = 0
+        # queries = queries[:1]
+        # print(f"queries: {queries}")
+        # queries[:, 1:] += torch.tensor([20, 30], device=queries.device)
+        # print(f"Modified queries: {queries}")
 
         event_visus = None
 
@@ -135,6 +142,10 @@ def main():
                 )
 
             coords_predicted = results['coords_predicted'].clone()
+            # print(f"Predicted coords shape: {coords_predicted.shape}")
+            print("timestamps.shape: ", timestamps_s.shape)
+            print("Last timestamp:", timestamps_s[-1].item())
+            print("Current time:", datetime.datetime.now())
             vis_logits = results['vis_predicted']
             
             # Remove support points
