@@ -2,8 +2,8 @@ package msgs;
 
 struct TrackingCommand
 {
-    int64_t   start_time_ns;
-    int64_t   end_time_ns;
+    int64_t   start_time_us;
+    int64_t   end_time_us;
 
     int32_t feature_ids[50];
     float feature_x[50];   // same length as feature_ids

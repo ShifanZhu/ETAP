@@ -9,14 +9,14 @@ import struct
 
 class TrackingUpdate(object):
 
-    __slots__ = ["timestamp_ns", "feature_ids", "feature_x", "feature_y"]
+    __slots__ = ["timestamp_us", "feature_ids", "feature_x", "feature_y"]
 
     __typenames__ = ["int64_t", "int32_t", "float", "float"]
 
     __dimensions__ = [None, [50], [50], [50]]
 
     def __init__(self):
-        self.timestamp_ns = 0
+        self.timestamp_us = 0
         """ LCM Type: int64_t """
         self.feature_ids = [ 0 for dim0 in range(50) ]
         """ LCM Type: int32_t[50] """
@@ -36,7 +36,7 @@ class TrackingUpdate(object):
         return buf.getvalue()
 
     def _encode_one(self, buf):
-        buf.write(struct.pack(">q", self.timestamp_ns))
+        buf.write(struct.pack(">q", self.timestamp_us))
         buf.write(struct.pack('>50i', *self.feature_ids[:50]))
         buf.write(struct.pack('>50f', *self.feature_x[:50]))
         buf.write(struct.pack('>50f', *self.feature_y[:50]))
@@ -54,7 +54,7 @@ class TrackingUpdate(object):
     @staticmethod
     def _decode_one(buf):
         self = TrackingUpdate()
-        self.timestamp_ns = struct.unpack(">q", buf.read(8))[0]
+        self.timestamp_us = struct.unpack(">q", buf.read(8))[0]
         self.feature_ids = struct.unpack('>50i', buf.read(200))
         self.feature_x = struct.unpack('>50f', buf.read(200))
         self.feature_y = struct.unpack('>50f', buf.read(200))
@@ -63,7 +63,7 @@ class TrackingUpdate(object):
     @staticmethod
     def _get_hash_recursive(parents):
         if TrackingUpdate in parents: return 0
-        tmphash = (0x78e0cc5b9fd17677) & 0xffffffffffffffff
+        tmphash = (0xa9c696c0d75169d9) & 0xffffffffffffffff
         tmphash  = (((tmphash<<1)&0xffffffffffffffff) + (tmphash>>63)) & 0xffffffffffffffff
         return tmphash
     _packed_fingerprint = None

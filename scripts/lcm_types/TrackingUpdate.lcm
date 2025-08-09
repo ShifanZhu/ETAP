@@ -2,7 +2,7 @@ package msgs;
 
 struct TrackingUpdate
 {
-    int64_t   timestamp_ns;
+    int64_t   timestamp_us;
 
     int32_t feature_ids[50]; // order matches x/y
     float feature_x[50];

@@ -9,16 +9,16 @@ import struct
 
 class TrackingCommand(object):
 
-    __slots__ = ["start_time_ns", "end_time_ns", "feature_ids", "feature_x", "feature_y"]
+    __slots__ = ["start_time_us", "end_time_us", "feature_ids", "feature_x", "feature_y"]
 
     __typenames__ = ["int64_t", "int64_t", "int32_t", "float", "float"]
 
     __dimensions__ = [None, None, [50], [50], [50]]
 
     def __init__(self):
-        self.start_time_ns = 0
+        self.start_time_us = 0
         """ LCM Type: int64_t """
-        self.end_time_ns = 0
+        self.end_time_us = 0
         """ LCM Type: int64_t """
         self.feature_ids = [ 0 for dim0 in range(50) ]
         """ LCM Type: int32_t[50] """
@@ -38,7 +38,7 @@ class TrackingCommand(object):
         return buf.getvalue()
 
     def _encode_one(self, buf):
-        buf.write(struct.pack(">qq", self.start_time_ns, self.end_time_ns))
+        buf.write(struct.pack(">qq", self.start_time_us, self.end_time_us))
         buf.write(struct.pack('>50i', *self.feature_ids[:50]))
         buf.write(struct.pack('>50f', *self.feature_x[:50]))
         buf.write(struct.pack('>50f', *self.feature_y[:50]))
@@ -56,7 +56,7 @@ class TrackingCommand(object):
     @staticmethod
     def _decode_one(buf):
         self = TrackingCommand()
-        self.start_time_ns, self.end_time_ns = struct.unpack(">qq", buf.read(16))
+        self.start_time_us, self.end_time_us = struct.unpack(">qq", buf.read(16))
         self.feature_ids = struct.unpack('>50i', buf.read(200))
         self.feature_x = struct.unpack('>50f', buf.read(200))
         self.feature_y = struct.unpack('>50f', buf.read(200))
@@ -65,7 +65,7 @@ class TrackingCommand(object):
     @staticmethod
     def _get_hash_recursive(parents):
         if TrackingCommand in parents: return 0
-        tmphash = (0x76376079493bf15b) & 0xffffffffffffffff
+        tmphash = (0xd08778486abe443e) & 0xffffffffffffffff
         tmphash  = (((tmphash<<1)&0xffffffffffffffff) + (tmphash>>63)) & 0xffffffffffffffff
         return tmphash
     _packed_fingerprint = None

@@ -95,7 +95,7 @@ def main():
                      tracks_leave_trace=-1, show_first_frame=5)
 
     for dataset in data_module.test_datasets:
-        print("datast", dataset)
+        print("dataset", dataset)
         sequence_name = dataset.subsequence_name
         tracker.init_video_online_processing()
         timestamps_s = None

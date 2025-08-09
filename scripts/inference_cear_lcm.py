@@ -4,7 +4,7 @@ ETAP online tracking with LCM I/O (single-file, robust)
 
 Changes vs previous:
 - Filters out zero rows in queries (and skips if nothing left)
-- Accumulates only frames inside [start_ns, end_ns]
+- Accumulates only frames inside [start_us, end_us]
 - Skips save/visualize cleanly if nothing processed
 - Aligns per-chunk timestamps with model outputs (min_len)
 - Optional window margin to avoid boundary misses
@@ -83,12 +83,12 @@ def normalize_voxels(voxels):
     return torch.where(mask, (voxels - mean) / std, voxels)
 
 
-def to_ns(ts_s: float) -> int:
-    return int(round(float(ts_s) * 1e9))
+def to_us(ts_s: float) -> int:
+    return int(round(float(ts_s) * 1e6))
 
 
-def to_s(ts_ns: int) -> float:
-    return float(ts_ns) * 1e-9
+def to_s(ts_us: int) -> float:
+    return float(ts_us) * 1e-6
 
 
 class LcmBridge:
@@ -126,9 +126,9 @@ class LcmBridge:
             self._pending_cmd = None
             return cmd
 
-    def publish_update(self, ts_ns: int, ids: List[int], xs: List[float], ys: List[float]):
+    def publish_update(self, ts_us: int, ids: List[int], xs: List[float], ys: List[float]):
         msg = TrackingUpdate()
-        msg.timestamp_ns = int(ts_ns)
+        msg.timestamp_us = int(ts_us)
         msg.feature_ids = list(map(int, ids))
         msg.feature_x = list(map(float, xs))
         msg.feature_y = list(map(float, ys))
@@ -212,7 +212,7 @@ def main():
                 time.sleep(0.01)
 
             print(f"Received command for '{sequence_name}': "
-                  f"[{cmd.start_time_ns} .. {cmd.end_time_ns}], {len(cmd.feature_ids)} seeds")
+                  f"[{cmd.start_time_us} .. {cmd.end_time_us}], {len(cmd.feature_ids)} seeds")
 
             # Validate seed arrays
             if len(cmd.feature_ids) != len(cmd.feature_x) or len(cmd.feature_ids) != len(cmd.feature_y):
@@ -224,6 +224,7 @@ def main():
                                    dtype=torch.float32, device=device)  # [N,2]
             seed_t = torch.zeros((seed_xy.shape[0], 1), dtype=torch.int64, device=device)
             original_queries = torch.cat([seed_t, seed_xy], dim=1)  # [N,3]
+            print("original_queries:", original_queries)
 
             # Optionally add support points (get unique IDs for them)
             if add_support_points:
@@ -263,8 +264,8 @@ def main():
             ts_all = []      # list of [Ti] CPU tensors (seconds)
 
             # Expand window edges slightly to avoid boundary misses
-            start_ns = int(cmd.start_time_ns) - int(args.window_margin_ns)
-            end_ns = int(cmd.end_time_ns) + int(args.window_margin_ns)
+            start_us = int(cmd.start_time_us) - int(args.window_margin_ns)
+            end_us = int(cmd.end_time_us) + int(args.window_margin_ns)
 
             # Iterate dataset
             for sample, start_idx in tqdm(dataset, desc=f'Predicting {sequence_name}'):
@@ -272,12 +273,14 @@ def main():
                 voxels = sample.voxels.to(device)
                 step = voxels.shape[0] // 2  # as in your original code
 
-                # Chunk timestamps (seconds → ns) for publish/window check
+                # Chunk timestamps (seconds → us) for publish/window check
                 ts_chunk_s = sample.timestamps[-step:]                 # [step]
-                ts_chunk_ns = (ts_chunk_s * 1e9).round().long()        # [step]
+                ts_chunk_us = (ts_chunk_s * 1e6).round().long()        # [step]
 
                 # Skip chunk if fully outside requested window
-                if (ts_chunk_ns[-1] < start_ns) or (ts_chunk_ns[0] > end_ns):
+                if (ts_chunk_us[-1] < start_us) or (ts_chunk_us[0] > end_us):
+                    # print(f"[{sequence_name}] Skipping chunk: "
+                    #     f"ts_s [{ts_chunk_s[0]:.6f} .. {ts_chunk_s[-1]:.6f}] outside [{to_s(start_us):.6f} .. {to_s(end_us):.6f}]")
                     continue
 
                 voxels = normalize_voxels(voxels)
@@ -293,6 +296,7 @@ def main():
                 # results: [B, T, Q, ...]
                 coords_predicted = results['coords_predicted'].clone()  # [1, T, Q, 2]
                 vis_logits = results['vis_predicted']                   # [1, T, Q]
+                # print("predicted coords:", coords_predicted)
 
                 # Remove support points from what we keep/publish (keep only seeds)
                 if support_num_queries > 0:
@@ -304,16 +308,16 @@ def main():
 
                 # Align lengths (some models may output T different from step)
                 Tcur = coords_predicted.shape[0]
-                min_len = min(Tcur, ts_chunk_s.shape[0], ts_chunk_ns.shape[0])
+                min_len = min(Tcur, ts_chunk_s.shape[0], ts_chunk_us.shape[0])
                 if min_len <= 0:
                     continue
                 coords_predicted = coords_predicted[:min_len]
                 vis_logits = vis_logits[:min_len]
                 ts_chunk_s = ts_chunk_s[:min_len]
-                ts_chunk_ns = ts_chunk_ns[:min_len]
+                ts_chunk_us = ts_chunk_us[:min_len]
 
                 # Select frames within window for saving
-                frame_mask = (ts_chunk_ns >= start_ns) & (ts_chunk_ns <= end_ns)
+                frame_mask = (ts_chunk_us >= start_us) & (ts_chunk_us <= end_us)
                 if frame_mask.any():
                     keep_idx = torch.nonzero(frame_mask, as_tuple=False).squeeze(-1)
                     coords_keep = coords_predicted[keep_idx].cpu()  # [Ti, N, 2]
@@ -326,8 +330,8 @@ def main():
 
                 # Publish per-frame within window (optionally gate by visibility)
                 for ti in range(min_len):
-                    ts_ns = int(ts_chunk_ns[ti].item())
-                    if ts_ns < start_ns or ts_ns > end_ns:
+                    ts_us = int(ts_chunk_us[ti].item())
+                    if ts_us < start_us or ts_us > end_us:
                         continue
                     xy = coords_predicted[ti].detach().cpu().numpy()  # [N,2]
                     vis = vis_logits[ti].detach().cpu().numpy()       # [N]
@@ -343,8 +347,21 @@ def main():
                         ids_out = all_ids
                         xs_out = xy[:, 0].tolist()
                         ys_out = xy[:, 1].tolist()
-
-                    lcm_bridge.publish_update(ts_ns, ids_out, xs_out, ys_out)
+                        # Ensure all lists are exactly 50 items
+                        num_features = 50
+                        out_len = len(ids_out)
+                        # Ensure all lists are exactly 50 items
+                        num_features = 50
+                        out_len = len(ids_out)
+                        # Pad or truncate each list independently to ensure length 50
+                        if out_len < num_features:
+                          pad_count = num_features - out_len
+                          ids_out += [0] * pad_count
+                        else:
+                          ids_out = ids_out[:num_features]
+                        xs_out = (xs_out + [0.0] * num_features)[:num_features]
+                        ys_out = (ys_out + [0.0] * num_features)[:num_features]
+                    lcm_bridge.publish_update(ts_us, ids_out, xs_out, ys_out)
 
                 # Optional visualization buffer (not strictly windowed)
                 event_visu = normalize_and_expand_channels(voxels.sum(dim=1))
@@ -353,7 +370,7 @@ def main():
             # ---- Save predictions only if something was processed ----
             if not processed_any:
                 print(f"[WARN] No frames processed for {sequence_name} in time window "
-                      f"[{start_ns} .. {end_ns}]. Skipping save/vis.")
+                      f"[{start_us} .. {end_us}]. Skipping save/vis.")
                 continue
 
             coords_out = torch.cat(coords_all, dim=0)   # [Tsel, N, 2]

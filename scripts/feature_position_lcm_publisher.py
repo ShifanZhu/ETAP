@@ -7,8 +7,8 @@ package msgs;
 
 struct TrackingCommand
 {
-    int64_t   start_time_ns;
-    int64_t   end_time_ns;
+    int64_t   start_time_us;
+    int64_t   end_time_us;
 
     int32_t feature_ids[50];
     float   feature_x[50];   // same length as feature_ids
@@ -21,7 +21,7 @@ Usage examples:
 
   # Manual points with explicit window (ns)
   python publish_command.py --manual 100 100 130 210 \
-      --start-ns 1723114500000000000 --end-ns 1723114505000000000
+      --start-us 1723114500000000000 --end-us 1723114505000000000
 
   # Explicit IDs/coords, 10s window starting now
   python publish_command.py --single --ids 1 2 --xs 100 130 --ys 100 210 --duration-s 10
@@ -82,10 +82,10 @@ def pad_fixed_50(ids, xs, ys):
     return ids_f, xs_f, ys_f
 
 
-def build_command(start_ns: int, end_ns: int, ids, xs, ys) -> TrackingCommand:
+def build_command(start_us: int, end_us: int, ids, xs, ys) -> TrackingCommand:
     msg = TrackingCommand()
-    msg.start_time_ns = int(start_ns)
-    msg.end_time_ns   = int(end_ns)
+    msg.start_time_us = int(start_us)
+    msg.end_time_us   = int(end_us)
     ids_f, xs_f, ys_f = pad_fixed_50(ids, xs, ys)
     msg.feature_ids = [int(v) for v in ids_f]
     msg.feature_x   = [float(v) for v in xs_f]
@@ -103,7 +103,7 @@ def parse_manual_points(flat_values):
 
 def features_from_npz(npz_path: Path):
     """
-    Returns (ids, xs, ys, start_ns, end_ns) using:
+    Returns (ids, xs, ys, start_us, end_us) using:
       - ids/xs/ys from first frame of coords_predicted
       - start/end from first/last timestamps
     """
@@ -116,16 +116,16 @@ def features_from_npz(npz_path: Path):
     ids = list(range(xy0.shape[0]))
     xs  = xy0[:, 0].tolist()
     ys  = xy0[:, 1].tolist()
-    start_ns = to_ns(float(ts_s[0]))
-    end_ns   = to_ns(float(ts_s[-1]))
-    return ids, xs, ys, start_ns, end_ns
+    start_us = to_ns(float(ts_s[0]))
+    end_us   = to_ns(float(ts_s[-1]))
+    return ids, xs, ys, start_us, end_us
 
 
 def features_from_txt(txt_path: Path):
     """
     File lines: "<id> <timestamp_s> <x> <y>"
     Use earliest timestamp group as features, and min/max timestamps as window.
-    Returns (ids, xs, ys, start_ns, end_ns).
+    Returns (ids, xs, ys, start_us, end_us).
     """
     rows = []
     with open(txt_path, "r") as f:
@@ -147,8 +147,8 @@ def features_from_txt(txt_path: Path):
 
     # window bounds
     all_ts = [r[0] for r in rows]
-    start_ns = to_ns(min(all_ts))
-    end_ns   = to_ns(max(all_ts))
+    start_us = to_ns(min(all_ts))
+    end_us   = to_ns(max(all_ts))
 
     # build features from the earliest timestamp group
     earliest = min(all_ts)
@@ -157,7 +157,7 @@ def features_from_txt(txt_path: Path):
     ids = [it[0] for it in items]
     xs  = [it[1] for it in items]
     ys  = [it[2] for it in items]
-    return ids, xs, ys, start_ns, end_ns
+    return ids, xs, ys, start_us, end_us
 
 
 def main():
@@ -183,8 +183,8 @@ def main():
     ap.add_argument("--ys", type=float, nargs="+", help="Ys for --single")
 
     # Time window options
-    ap.add_argument("--start-ns", type=int, default=None, help="Override start_time_ns")
-    ap.add_argument("--end-ns",   type=int, default=None, help="Override end_time_ns")
+    ap.add_argument("--start-us", type=int, default=None, help="Override start_time_us")
+    ap.add_argument("--end-us",   type=int, default=None, help="Override end_time_us")
     ap.add_argument("--duration-s", type=float, default=5.0,
                     help="If start/end not provided and no data file, use [now .. now+duration]")
 
@@ -219,19 +219,19 @@ def main():
         ap.error("one of --manual / --single / --from-npz / --from-txt is required")
 
     # Resolve window (CLI overrides win)
-    start_ns = args.start_ns if args.start_ns is not None else default_start
-    end_ns   = args.end_ns   if args.end_ns   is not None else default_end
-    if end_ns <= start_ns:
-        ap.error(f"end_time_ns ({end_ns}) must be > start_time_ns ({start_ns})")
+    start_us = args.start_us if args.start_us is not None else default_start
+    end_us   = args.end_us   if args.end_us   is not None else default_end
+    if end_us <= start_us:
+        ap.error(f"end_time_us ({end_us}) must be > start_time_us ({start_us})")
 
     # Build and publish command
-    msg = build_command(start_ns, end_ns, ids, xs, ys)
+    msg = build_command(start_us, end_us, ids, xs, ys)
     lc.publish(args.topic, msg.encode())
 
     # Brief printout
     n_valid = min(len(ids), MAXF)
     print(f"[OK] Published TrackingCommand to '{args.topic}' "
-          f"window=[{start_ns} .. {end_ns}] with {n_valid} features "
+          f"window=[{start_us} .. {end_us}] with {n_valid} features "
           f"(padded/truncated to {MAXF}).")
 
 
