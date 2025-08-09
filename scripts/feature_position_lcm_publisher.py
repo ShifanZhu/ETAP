@@ -240,31 +240,31 @@ if __name__ == "__main__":
 
 # # Example usage:
 # # Publish two points: (100,100) and (130,210)
-# python publish_features.py --manual 100 100 130 210
+# python python scripts/feature_position_lcm_publisher.py --manual 100 100 130 210 --start-us 1704749447959841 --end-us 1704749448959841
 # # Publish three points with custom starting ID = 500
-# python publish_features.py --manual 50 60 70 80 90 100 --start-id 500
+# python scripts/feature_position_lcm_publisher.py --manual 50 60 70 80 90 100 --start-id 500
 # # Publish with a fixed timestamp (nanoseconds)
-# python publish_features.py --manual 100 200 300 400 --timestamp-ns 1723114500000000000
+# python scripts/feature_position_lcm_publisher.py --manual 100 200 300 400 --timestamp-ns 1723114500000000000
 
 # # Publish IDs 1, 2 with coords (100,100) and (130,210)
-# python publish_features.py --single --ids 1 2 --xs 100 130 --ys 100 210
+# python scripts/feature_position_lcm_publisher.py --single --ids 1 2 --xs 100 130 --ys 100 210
 # # Publish with timestamp override
-# python publish_features.py --single \
+# python scripts/feature_position_lcm_publisher.py --single \
 #     --ids 101 102 103 \
 #     --xs 10.5 20.0 30.2 \
 #     --ys 50.1 49.9 48.7 \
 #     --timestamp-ns 1723114500000000000
 
 # # Stream at 30 FPS once
-# python publish_features.py --npz output/inference/exp1/seq001.npz --fps 30
+# python scripts/feature_position_lcm_publisher.py --npz output/inference/exp1/seq001.npz --fps 30
 # # Stream at 10 FPS and repeat forever
-# python publish_features.py --npz output/inference/exp1/seq001.npz --fps 10 --repeat
+# python scripts/feature_position_lcm_publisher.py --npz output/inference/exp1/seq001.npz --fps 10 --repeat
 # # Stream as fast as possible (no delay)
-# python publish_features.py --npz output/inference/exp1/seq001.npz --fps 0
+# python scripts/feature_position_lcm_publisher.py --npz output/inference/exp1/seq001.npz --fps 0
 
 # # Stream at 30 FPS once
-# python publish_features.py --txt output/inference/exp1/seq001.txt --fps 30
+# python scripts/feature_position_lcm_publisher.py --txt output/inference/exp1/seq001.txt --fps 30
 # # Stream at 5 FPS and repeat forever
-# python publish_features.py --txt output/inference/exp1/seq001.txt --fps 5 --repeat
+# python scripts/feature_position_lcm_publisher.py --txt output/inference/exp1/seq001.txt --fps 5 --repeat
 # # Stream as fast as possible
-# python publish_features.py --txt output/inference/exp1/seq001.txt --fps 0
+# python scripts/feature_position_lcm_publisher.py --txt output/inference/exp1/seq001.txt --fps 0
