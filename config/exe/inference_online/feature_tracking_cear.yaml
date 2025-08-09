@@ -1,10 +1,13 @@
 common:
   exp_name: feature_tracking_cear
   ckp_path: weights/ETAP_v1_cvpr25.pth
+  add_support_points: true
+  height: 240
+  width: 320
 
 data:
   data_root: data/
-  dataset_name: feature_tracking_cear_online
+  dataset_name: cear
   preprocessed_name: event_stack_v1
 
 model:

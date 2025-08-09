@@ -170,8 +170,12 @@ def process_cear_subsequence(subsequence_name, config, args, save_name, camera_m
     seq_root = os.path.join(dataset_path, subsequence_name)
     out_path = os.path.join(seq_root, 'events', save_name)
     os.makedirs(out_path, exist_ok=True)
+    print("dataset_path", dataset_path)
+    print("seq_root:", seq_root)
+    print("out_path:", out_path)
 
-    gt_path = os.path.join('config/misc/eds/gt_tracks', f'{subsequence_name}.gt.txt')
+
+    gt_path = os.path.join('config/misc/cear/gt_tracks', f'{subsequence_name}.gt.txt')
     gt_tracks = np.genfromtxt(gt_path)  # [id, t, x, y]
     timestamps_us = (1e6 * np.unique(gt_tracks[:, 1])).astype(np.int64)
 
@@ -179,6 +183,7 @@ def process_cear_subsequence(subsequence_name, config, args, save_name, camera_m
         events_path = os.path.join(seq_root, 'events_corrected.h5')
     else:
         events_path = os.path.join(seq_root, 'events.h5')
+    print("events_path", events_path)
     with h5py.File(events_path, 'r') as f:
         x = f['x']
         y = f['y']
@@ -513,13 +518,13 @@ def process_cear_dataset(config, args):
         with mp.Pool(processes=args.num_workers) as pool:
             subsequence_args = [
                 (subsequence_name, config, args, save_name, camera_matrix, distortion_coeffs, homography, converter)
-                for subsequence_name in SUPPORTED_SEQUENCES_FEATURE_TRACKING['eds']
+                for subsequence_name in SUPPORTED_SEQUENCES_FEATURE_TRACKING['cear']
             ]
 
-            pool.starmap(process_eds_subsequence, subsequence_args)
+            pool.starmap(process_cear_subsequence, subsequence_args)
     else:
-        for subsequence_name in SUPPORTED_SEQUENCES_FEATURE_TRACKING['eds']:
-            process_eds_subsequence(subsequence_name, config, args, save_name, camera_matrix, 
+        for subsequence_name in SUPPORTED_SEQUENCES_FEATURE_TRACKING['cear']:
+            process_cear_subsequence(subsequence_name, config, args, save_name, camera_matrix, 
                                   distortion_coeffs, homography, converter)
 
 def process_ec_dataset(config, args):
@@ -642,7 +647,7 @@ def main():
     parser.add_argument('--config', type=str, required=True, 
                       help='Path to the config file')
     parser.add_argument('--dataset', type=str, required=True, 
-                      choices=['eds', 'ec', 'event_kubric', 'evimo2', 'e2d2'],
+                      choices=['eds', 'ec', 'cear', 'event_kubric', 'evimo2', 'e2d2'],
                       help='Which dataset to process')
     parser.add_argument('--use_rectified', action='store_true', 
                       help='Use rectified events (EDS dataset only)')

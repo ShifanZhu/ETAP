@@ -19,5 +19,7 @@ class DataModuleFactory:
             return EventKubricDataModule(**data_config)
         elif dataset_name == 'evimo2':
             return Evimo2DataModule(**data_config)
+        elif dataset_name == 'cear':
+            return FeatureTrackingDataModule(**data_config)
         else:
             raise ValueError("Unsupported dataset_name.")

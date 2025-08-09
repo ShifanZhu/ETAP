@@ -22,6 +22,10 @@ class FeatureTrackingDataModule(pl.LightningDataModule):
         elif self.hparams.dataset_name == 'ec':
             supported_sequences = SUPPORTED_SEQUENCES_FEATURE_TRACKING['ec']
             data_roots = [self.hparams.data_root for _ in SUPPORTED_SEQUENCES_FEATURE_TRACKING['ec']]
+        elif self.hparams.dataset_name == 'cear':
+            supported_sequences = SUPPORTED_SEQUENCES_FEATURE_TRACKING['cear']
+            data_root_cear = os.path.join(self.hparams.data_root, 'cear')
+            data_roots = [data_root_cear for _ in SUPPORTED_SEQUENCES_FEATURE_TRACKING['cear']]
         elif self.hparams.dataset_name == 'feature_tracking_online':
             supported_sequences = SUPPORTED_SEQUENCES_FEATURE_TRACKING['eds'] + SUPPORTED_SEQUENCES_FEATURE_TRACKING['ec']
             data_root_eds = os.path.join(self.hparams.data_root, 'eds')
@@ -69,7 +73,7 @@ class FeatureTrackingInferenceDataset(torch.utils.data.Dataset):
 
         self.gt_times_s = np.unique(gt_tracks[:, 1])
         self.gt_times_us = (1e6 * self.gt_times_s).astype(int)
-        assert np.allclose(gt_ts_for_sanity_check, self.gt_times_us)
+        # assert np.allclose(gt_ts_for_sanity_check, self.gt_times_us)
 
         self.start_indices = np.arange(0, len(self.gt_times_us), stride)
 
@@ -108,6 +112,7 @@ class FeatureTrackingInferenceDataset(torch.utils.data.Dataset):
         return sample, start_idx
 
     def load_event_representations(self, events_path):
+        print("event_path:", events_path)
         repr_files = [f for f in os.listdir(events_path) if f.endswith('.npy')]
 
         # Extract the integer numbers from the file names

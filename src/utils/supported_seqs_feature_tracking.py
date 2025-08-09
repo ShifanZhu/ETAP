@@ -12,5 +12,8 @@ SUPPORTED_SEQUENCES_FEATURE_TRACKING = {
         'boxes_translation',
         'shapes_6dof',
         'shapes_translation'
+    ],
+    'cear': [
+        'mocap1_well-lit_trot'
     ]
 }

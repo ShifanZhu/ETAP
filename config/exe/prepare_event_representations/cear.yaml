@@ -1,8 +1,8 @@
 common:
   dataset_path: data/cear
   num_events: 100000
-  height: 260
-  width: 346
+  height: 240
+  width: 320
   save_prefix: v1
   
 event_representation:
