@@ -1,0 +1,10 @@
+package msgs;
+
+struct TrackingUpdate
+{
+    int64_t   timestamp_ns;
+
+    int32_t feature_ids[50]; // order matches x/y
+    float feature_x[50];
+    float feature_y[50];
+}

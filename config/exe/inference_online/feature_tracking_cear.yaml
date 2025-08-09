@@ -1,7 +1,7 @@
 common:
   exp_name: feature_tracking_cear
   ckp_path: weights/ETAP_v1_cvpr25.pth
-  add_support_points: true
+  add_support_points: false
   height: 240
   width: 320
 
