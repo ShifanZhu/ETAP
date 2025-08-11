@@ -1,45 +1,23 @@
 #!/usr/bin/env python3
-"""
-ETAP online tracking with LCM I/O (single-file, robust)
-
-Changes vs previous:
-- Filters out zero rows in queries (and skips if nothing left)
-- Accumulates only frames inside [start_us, end_us]
-- Skips save/visualize cleanly if nothing processed
-- Aligns per-chunk timestamps with model outputs (min_len)
-- Optional window margin to avoid boundary misses
-"""
 
 import argparse
-import subprocess
-from pathlib import Path
-import sys
-import numpy as np
-import yaml
-import torch
-from tqdm import tqdm
-import cv2
-import datetime
 import time
 import threading
+import sys
+import yaml
+import numpy as np
+import torch
+from pathlib import Path
+from tqdm import tqdm
 from typing import Optional, List
+import subprocess
+import os
 
-# -----------------------------
-# Make sure we can import msgs
-# -----------------------------
-# Expect generated files under ./lcm_gen/msgs or scripts/lcm_types/msgs
-repo_root = Path(__file__).parent.parent
-sys.path.append(str(repo_root / "lcm_gen"))
-sys.path.append(str(repo_root / "scripts" / "lcm_types"))
+# Add project root to path for ETAP imports
+project_root = Path(__file__).parent.parent
+sys.path.append(str(project_root))
+sys.path.append(str(project_root / 'src'))
 
-# Your repo modules
-sys.path.append(str(repo_root))
-
-from src.data.modules import DataModuleFactory
-from src.model.etap.model import Etap
-from src.utils import Visualizer, normalize_and_expand_channels, make_grid
-
-# LCM
 try:
     import lcm
     LCM_AVAILABLE = True
@@ -47,35 +25,36 @@ try:
 except ImportError:
     print("LCM not available, falling back to mock")
     LCM_AVAILABLE = False
+
+sys.path.append(str(Path(__file__).parent))
+from lcm_types.msgs import TrackingCommand, TrackingUpdate
+
+# ETAP imports
 try:
-    from msgs import TrackingCommand, TrackingUpdate
-except Exception:
-    from lcm_types.msgs import TrackingCommand, TrackingUpdate  # type: ignore
+    from src.data.modules import DataModuleFactory
+    from src.model.etap.model import Etap
+    from src.utils import Visualizer, normalize_and_expand_channels, make_grid
+except ImportError as e:
+    print(f"Error importing ETAP modules: {e}")
+    sys.exit(1)
 
-torch.set_float32_matmul_precision('high')
 
-
-def write_points_to_file(points, timestamps, filepath):
-    """Write tracking points to a file.
-
-    points: [T, N, 2] (numpy)
-    timestamps: [T] seconds (numpy)
-    """
-    T, N, _ = points.shape
-    with open(filepath, 'w') as f:
+def write_points_to_file(coords, timestamps, output_path):
+    """Write points to file in the expected format."""
+    T, N, _ = coords.shape
+    with open(output_path, 'w') as f:
         for t in range(T):
             for n in range(N):
-                x, y = points[t, n]
-                f.write(f"{n} {float(timestamps[t]):.9f} {x:.9f} {y:.9f}\n")
+                f.write(f"{n} {timestamps[t]:.6f} {coords[t, n, 0]:.2f} {coords[t, n, 1]:.2f}\n")
 
 
 def get_git_commit_hash():
     """Get the current git commit hash."""
     try:
-        commit_hash = subprocess.check_output(['git', 'rev-parse', 'HEAD'], stderr=subprocess.STDOUT).decode().strip()
-        return commit_hash
-    except subprocess.CalledProcessError as e:
-        print(f"Error obtaining git commit hash: {e.output.decode().strip()}")
+        result = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                              capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except:
         return "unknown"
 
 
@@ -90,11 +69,12 @@ def normalize_voxels(voxels):
 
 
 def to_us(ts_s: float) -> int:
-    return int(round(float(ts_s) * 1e6))
+    return int(ts_s * 1e6)
 
 
 def to_s(ts_us: int) -> float:
-    return float(ts_us) * 1e-6
+    return ts_us / 1e6
+
 
 class LcmBridge:
     """LCM Bridge with compatibility fixes for Python 3.13"""
@@ -228,24 +208,26 @@ def simulate_publisher_command(bridge, points, start_us, end_us, delay=2.0):
 
     threading.Thread(target=publish_after_delay, daemon=True).start()
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='config/exe/inference_online/feature_tracking_cear.yaml')
     parser.add_argument('--device', type=str, default='cuda:0')
-    # LCM overrides (optional – can also be set in config['common'])
-    parser.add_argument('--lcm_cmd_topic', type=str, default=None)
-    parser.add_argument('--lcm_upd_topic', type=str, default=None)
-    # Window margin (ns) to catch boundary frames
-    parser.add_argument('--window_margin_ns', type=int, default=1_000_000)  # 1 ms
+    parser.add_argument('--lcm_cmd_topic', type=str, default='TRACKING_COMMAND')
+    parser.add_argument('--lcm_upd_topic', type=str, default='TRACKING_UPDATE')
+    parser.add_argument('--window_margin_ns', type=int, default=1_000_000)
     parser.add_argument('--test_mode', action='store_true', help='Run with simulated publisher')
 
     args = parser.parse_args()
+
+    print("="*70)
+    print("ETAP Feature Tracking Inference - Working Version")
+    print("="*70)
 
     config_path = Path(args.config)
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
-    project_root = Path(__file__).parent.parent
     save_dir = project_root / 'output' / 'inference' / config['common']['exp_name']
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -279,9 +261,7 @@ def main():
             print(" Use --test_mode to run without real data")
             return
 
-    data_module = DataModuleFactory.create(config['data'])
-    data_module.prepare_data()
-
+    # Load model
     model_config = config['model']
     model_config['model_resolution'] = (512, 512)
     checkpoint_path = Path(config['common']['ckp_path'])
@@ -300,11 +280,8 @@ def main():
     viz = Visualizer(save_dir=save_dir, pad_value=0, linewidth=1,
                      tracks_leave_trace=-1, show_first_frame=5)
 
-    # --- LCM integration ---
-    lcm_cmd_topic = args.lcm_cmd_topic or config['common'].get('lcm_cmd_topic', 'TRACKING_COMMAND')
-    lcm_upd_topic = args.lcm_upd_topic or config['common'].get('lcm_upd_topic', 'TRACKING_UPDATE')
     vis_thresh = float(config['common'].get('visibility_threshold', 0.0))
-    lcm_bridge = LcmBridge(lcm_cmd_topic, lcm_upd_topic)
+    lcm_bridge = LcmBridge(args.lcm_cmd_topic, args.lcm_upd_topic)
 
     if args.test_mode:
         print("\n TEST MODE: Simulating README scenario")
@@ -574,6 +551,5 @@ def main():
         print(" Done.")
 
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
