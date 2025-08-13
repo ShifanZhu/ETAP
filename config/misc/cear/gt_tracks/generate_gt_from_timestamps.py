@@ -111,7 +111,10 @@ if __name__ == "__main__":
 
     output_file = "mocap1_well-lit_trot.gt.txt"
     with open(output_file, "w") as f:
-        for line in events:
+        for i, line in enumerate(events):
+            if (i+1) % 2 == 0:
+                print("Skipping line:", i+1)
+                continue
             f.write(line + "\n")
 
     print(f"Wrote {len(events)} lines to {output_file}")

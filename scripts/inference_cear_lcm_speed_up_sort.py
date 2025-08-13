@@ -420,56 +420,116 @@ def main():
                 print(" Processing real dataset...")
             sample_all_voxels = []
             sample_all_timestamps = []
+
+
+
+
+
+
+
+
             print(f"Current time2: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
-
-
-
-
             # Convert once
-            start_s = start_us / 1e6
-            end_s   = end_us   / 1e6
+            start_s = start_us * 1e-6
+            end_s   = end_us   * 1e-6
 
             sample_all_voxels = []
             sample_all_timestamps = []
-
-            # Local refs for tiny speedup
             append_vox = sample_all_voxels.append
             append_ts  = sample_all_timestamps.append
 
-            for sample, start_idx in tqdm(dataset, desc=f'Processing {sequence_name}'):
-                ts = sample.timestamps  # 1D, sorted ascending
+            frames_collected = 0
+            last_ts_s: Optional[float] = None  # track last appended timestamp (sec)
+
+            # (Drop tqdm here to minimize overhead in the hot loop)
+            for sample, start_idx in dataset:
+                ts = sample.timestamps  # sorted 1D
                 vox = sample.voxels
 
-                # Fast reject samples fully before or after the window
-                # (Assumes each sample's timestamps are contiguous, non-decreasing)
-                if ts[-1] < start_s:
-                    continue
-                if ts[0] > end_s:
-                    # If the whole dataset is time-ordered, we can stop early
-                    break
-
-                # Binary search the in-window slice [i0:i1)
+                # ---- Torch path (preferred) ----
                 if torch.is_tensor(ts):
-                    # Ensure 1D float tensor on CPU for searchsorted speed
-                    ts_cpu = ts.detach().to('cpu').reshape(-1)
-                    i0 = int(torch.searchsorted(ts_cpu, start_s, right=False))
-                    i1 = int(torch.searchsorted(ts_cpu, end_s,   right=True))
+                    # 1D CPU tensor view, no detach/copy unless needed
+                    ts_cpu = ts.cpu() if ts.device.type != "cpu" else ts
+                    ts_cpu = ts_cpu.reshape(-1)
+
+                    # Fast reject
+                    ts0 = float(ts_cpu[0]); ts1 = float(ts_cpu[-1])
+                    if ts1 < start_s:
+                        continue
+                    if ts0 > end_s:
+                        break  # OK only if samples are globally time-ordered
+
+                    # Window slice
+                    i0 = int(torch.searchsorted(ts_cpu, torch.tensor(start_s, dtype=ts_cpu.dtype), right=False))
+                    i1 = int(torch.searchsorted(ts_cpu, torch.tensor(end_s,   dtype=ts_cpu.dtype), right=True))
+
+                    if last_ts_s is not None:
+                        # Skip anything <= last appended timestamp to avoid duplicates/overlap
+                        i_skip = int(torch.searchsorted(ts_cpu, torch.tensor(last_ts_s, dtype=ts_cpu.dtype), right=True))
+                        if i_skip > i0:
+                            i0 = i_skip
+
+                    if i1 <= i0:
+                        continue
+
+                    append_vox(vox[i0:i1])
+                    append_ts(ts_cpu[i0:i1])
+                    frames_collected += (i1 - i0)
+                    last_ts_s = float(ts_cpu[i1 - 1])  # update cursor
+
+                # ---- NumPy / list fallback ----
                 else:
-                    # NumPy / list fallback
                     ts_np = np.asarray(ts).reshape(-1)
+                    ts0 = float(ts_np[0]); ts1 = float(ts_np[-1])
+
+                    if ts1 < start_s:
+                        continue
+                    if ts0 > end_s:
+                        break
+
                     i0 = int(np.searchsorted(ts_np, start_s, side='left'))
                     i1 = int(np.searchsorted(ts_np, end_s,   side='right'))
 
-                if i1 <= i0:
-                    continue  # no overlap in this sample
+                    if last_ts_s is not None:
+                        i_skip = int(np.searchsorted(ts_np, last_ts_s, side='right'))
+                        if i_skip > i0:
+                            i0 = i_skip
 
-                # Append only the overlapping frames
-                append_vox(vox[i0:i1])     # keep on CPU; move to GPU later in one go
-                append_ts(ts[i0:i1])
+                    if i1 <= i0:
+                        continue
 
-            print(f"Collected {sum(v.shape[0] for v in sample_all_voxels)} frames across "
-                  f"{len(sample_all_voxels)} samples in the window.")
+                    append_vox(vox[i0:i1])
+                    append_ts(torch.from_numpy(ts_np[i0:i1]))  # store as torch for easy cat
+                    frames_collected += (i1 - i0)
+                    last_ts_s = float(ts_np[i1 - 1])
+
+            print(f"Collected {frames_collected} frames across {len(sample_all_voxels)} samples in the window.")
+
+            # ---- Combine, then sort + de-dup (robust against any residual overlap or out-of-order samples) ----
+            if sample_all_voxels:
+                combined_voxels = torch.cat(sample_all_voxels, dim=0)
+                combined_timestamps = torch.cat(sample_all_timestamps, dim=0)  # seconds (torch 1D)
+
+                # Sort by timestamp (microsecond precision), then drop exact duplicates
+                ts_us = (combined_timestamps * 1e6).round().to(torch.long)
+                order = torch.argsort(ts_us)
+                ts_us = ts_us.index_select(0, order)
+                combined_voxels = combined_voxels.index_select(0, order)
+
+                keep = torch.ones_like(ts_us, dtype=torch.bool)
+                keep[1:] = ts_us[1:] != ts_us[:-1]  # drop duplicates, keep first occurrence
+
+                ts_us = ts_us[keep]
+                combined_voxels = combined_voxels[keep]
+                combined_timestamps = ts_us.to(torch.float64) * 1e-6  # back to seconds
+
+                # (Optional) assert strictly increasing
+                # assert torch.all(ts_us[1:] > ts_us[:-1])
+
+
+
+
 
 
 
@@ -564,121 +624,6 @@ def main():
                 
                 continue
 
-
-
-
-            else:
-                # Synthetic fallback / demo branch
-                print(" Simulating processing with synthetic data...")
-
-                duration_s = max(0.0, (end_us - start_us) / 1e6)
-                num_frames = max(1, int(duration_s * 10))  # ~10 FPS simulation
-
-                for frame_idx in range(num_frames):
-                    voxels = torch.randn(8, 10, 240, 320, device=device)
-                    voxels = normalize_voxels(voxels)
-
-                    with torch.no_grad():
-                        results = tracker(
-                            video=voxels[None],
-                            queries=queries[None],
-                            is_online=True,
-                            iters=6
-                        )
-
-                    coords_predicted = results['coords_predicted'][0][-1].cpu().numpy()
-
-                    frame_time_us = int(start_us + frame_idx * (end_us - start_us) / max(1, num_frames))
-
-                    xs_out = coords_predicted[:, 0].tolist()
-                    ys_out = coords_predicted[:, 1].tolist()
-
-                    num_features = 50
-                    ids_out = (all_ids + [0] * num_features)[:num_features]
-                    xs_out  = (xs_out  + [0.0] * num_features)[:num_features]
-                    ys_out  = (ys_out  + [0.0] * num_features)[:num_features]
-
-                    lcm_bridge.publish_update(frame_time_us, ids_out, xs_out, ys_out)
-                    time.sleep(0.1)
-
-                processed_any = True
-
-            # except Exception as e:
-            #     # If the real-data branch throws, we fall back to synthetic here for robustness
-                # print(f"  Real data processing failed: {e}")
-            #     print(" Falling back to synthetic processing for demonstration...")
-
-            #     duration_s = max(0.0, (end_us - start_us) / 1e6)
-            #     num_frames = max(1, int(duration_s * 10))
-
-            #     for frame_idx in range(num_frames):
-            #         voxels = torch.randn(8, 10, 240, 320, device=device)
-            #         voxels = normalize_voxels(voxels)
-
-            #         with torch.no_grad():
-            #             results = tracker(
-            #                 video=voxels[None],
-            #                 queries=queries[None],
-            #                 is_online=True,
-            #                 iters=6
-            #             )
-
-            #         coords_predicted = results['coords_predicted'][0][-1].cpu().numpy()
-            #         frame_time_us = int(start_us + frame_idx * (end_us - start_us) / max(1, num_frames))
-
-            #         xs_out = coords_predicted[:, 0].tolist()
-            #         ys_out = coords_predicted[:, 1].tolist()
-
-            #         num_features = 50
-            #         ids_out = (all_ids + [0] * num_features)[:num_features]
-            #         xs_out  = (xs_out  + [0.0] * num_features)[:num_features]
-            #         ys_out  = (ys_out  + [0.0] * num_features)[:num_features]
-
-            #         lcm_bridge.publish_update(frame_time_us, ids_out, xs_out, ys_out)
-            #         time.sleep(0.1)
-
-                processed_any = True
-
-            # 5) Post-processing / save
-            if processed_any:
-                print(f" Processing complete for {sequence_name}")
-
-                if coords_all and not args.test_mode:
-                    coords_out = torch.cat(coords_all, dim=0)
-                    vis_out    = torch.cat(vis_all,   dim=0)
-                    ts_out     = torch.cat(ts_all,    dim=0)
-
-                    output_npz = save_dir / f'{sequence_name}.npz'
-                    np.savez(
-                        output_npz,
-                        coords_predicted=coords_out.numpy(),
-                        vis_logits=vis_out.numpy(),
-                        timestamps=ts_out.numpy()
-                    )
-
-                    output_txt = save_dir / f'{sequence_name}.txt'
-                    write_points_to_file(
-                        coords_out.numpy(),
-                        ts_out.numpy(),
-                        output_txt
-                    )
-
-                    print(f" Results saved to {output_npz} and {output_txt}")
-                elif args.test_mode:
-                    print(" Test mode: Skipping file save")
-            else:
-                print(f"  No frames processed for {sequence_name}")
-
-            print(" Returning to waiting state...")
-
-        # end while
-
-    except KeyboardInterrupt:
-        print("\n Shutting down...")
-    except Exception as e:
-        print(f"\n❌ Error during processing: {e}")
-        import traceback
-        traceback.print_exc()
     finally:
         lcm_bridge.close()
         print(" Done.")
