@@ -367,6 +367,7 @@ def main():
         simulate_publisher_command(lcm_bridge, points1, start_us1, end_us1, delay=1.0)
 
     DEBUG_PRINTS = True  # flip to True for verbose prints
+    print(f"Current time0: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
         iteration = 0
@@ -407,8 +408,9 @@ def main():
 
             print(
                 f"Received message for '{sequence_name}': "
-                f"[{msg.start_time_us*1e-6} .. {msg.end_time_us*1e-6}] s, "
+                f"[{msg.start_time_us*1e-6} - {msg.end_time_us*1e-6}] s, "
             )
+            print(f"Current time1: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
             if (len(msg.feature_ids) != len(msg.feature_x)) or (len(msg.feature_ids) != len(msg.feature_y)):
                 raise ValueError("LCM TrackingCommand arrays must be the same length")
@@ -471,17 +473,58 @@ def main():
                 print(" Processing real dataset...")
             sample_all_voxels = []
             sample_all_timestamps = []
+            print(f"Current time2: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+
+
+
+            # Convert once
+            start_s = start_us / 1e6
+            end_s   = end_us   / 1e6
+
+            sample_all_voxels = []
+            sample_all_timestamps = []
+
+            # Local refs for tiny speedup
+            append_vox = sample_all_voxels.append
+            append_ts  = sample_all_timestamps.append
 
             for sample, start_idx in tqdm(dataset, desc=f'Processing {sequence_name}'):
+                ts = sample.timestamps  # 1D, sorted ascending
                 vox = sample.voxels
-                ts  = sample.timestamps
 
-                # Boolean mask for timestamps within range
-                mask = (ts >= start_us * 1e-6) & (ts <= end_us * 1e-6)
+                # Fast reject samples fully before or after the window
+                # (Assumes each sample's timestamps are contiguous, non-decreasing)
+                if ts[-1] < start_s:
+                    continue
+                if ts[0] > end_s:
+                    # If the whole dataset is time-ordered, we can stop early
+                    break
 
-                if mask.any():
-                    sample_all_voxels.append(vox[mask])
-                    sample_all_timestamps.append(ts[mask])
+                # Binary search the in-window slice [i0:i1)
+                if torch.is_tensor(ts):
+                    # Ensure 1D float tensor on CPU for searchsorted speed
+                    ts_cpu = ts.detach().to('cpu').reshape(-1)
+                    i0 = int(torch.searchsorted(ts_cpu, start_s, right=False))
+                    i1 = int(torch.searchsorted(ts_cpu, end_s,   right=True))
+                else:
+                    # NumPy / list fallback
+                    ts_np = np.asarray(ts).reshape(-1)
+                    i0 = int(np.searchsorted(ts_np, start_s, side='left'))
+                    i1 = int(np.searchsorted(ts_np, end_s,   side='right'))
+
+                if i1 <= i0:
+                    continue  # no overlap in this sample
+
+                # Append only the overlapping frames
+                append_vox(vox[i0:i1])     # keep on CPU; move to GPU later in one go
+                append_ts(ts[i0:i1])
+
+            print(f"Collected {sum(v.shape[0] for v in sample_all_voxels)} frames across "
+                  f"{len(sample_all_voxels)} samples in the window.")
+
+
+
+            print(f"Current time3: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
             # Combine after loop
             if sample_all_voxels:
@@ -489,8 +532,9 @@ def main():
                 combined_timestamps = torch.cat(sample_all_timestamps, dim=0)
 
                 if DEBUG_PRINTS:
+                    print("Combined timestamps:", [f"{ts:.6f}" for ts in combined_timestamps])
                     print(f"📦 Aggregated {combined_voxels.shape[0]} frames "
-                          f"in range [{combined_timestamps[0]:.6f} .. {combined_timestamps[-1]:.6f}] s")
+                          f"in range [{combined_timestamps[0]:.6f} - {combined_timestamps[-1]:.6f}] s")
 
                 # # Concatenate all accumulated samples
                 # combined_voxels = torch.cat(sample_all_voxels, dim=0)
@@ -510,7 +554,7 @@ def main():
                 #     )
 
                 max_len = 8  # maximum frames per voxel chunk
-                print("original queries:", original_queries)
+                # print("original queries:", original_queries)
 
                 num_frames = combined_voxels.shape[0]
                 for chunk_start in range(0, num_frames, max_len):
@@ -525,8 +569,11 @@ def main():
                               f"{voxel_chunk.shape[0]} frames "
                               f"[{ts_chunk[0]:.6f} .. {ts_chunk[-1]:.6f}] s")
 
+                    print(f"Current time4: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                    
                     # Normalize and send to tracker
                     voxel_chunk = normalize_voxels(voxel_chunk)
+                    print(f"Current time5: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
                     with torch.no_grad():
                         results = tracker(
                             video=voxel_chunk[None],   # [1, T_chunk, ...]
@@ -534,6 +581,7 @@ def main():
                             is_online=True,
                             iters=6
                         )
+                    print(f"Current time6: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
                     # ---- Update queries for next chunk ----
                     cp = results['coords_predicted']   # possibly [1, T, N_total, 2] or [T, N_total, 2]
@@ -555,7 +603,7 @@ def main():
                         dim=1
                     )  # [N_seed, 3]
                     queries = new_seed_queries
-                    print("Updated queries:", queries)
+                    # print("Updated queries:", queries)
                 ids_out = seed_ids
                 xs_out = last_xy[:, 0].detach().cpu().numpy().tolist()
                 ys_out = last_xy[:, 1].detach().cpu().numpy().tolist()
@@ -571,10 +619,10 @@ def main():
                   xs_out  = xs_out[:num_features]
                   ys_out  = ys_out[:num_features]
                 ts_us = combined_timestamps[-1].item()*1e6
-                print("ids_out:", ids_out)
-                print("xs_out:", xs_out)
-                print("ys_out:", ys_out)
-                print(f"Publishing update for time {to_s(ts_us):.6f} s")
+                # print("ids_out:", ids_out)
+                # print("xs_out:", xs_out)
+                # print("ys_out:", ys_out)
+                # print(f"Publishing update for time {to_s(ts_us):.6f} s")
                 
 
                 lcm_bridge.publish_update(ts_us, ids_out, xs_out, ys_out)
