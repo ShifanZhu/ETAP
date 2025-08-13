@@ -160,7 +160,62 @@ def process_eds_subsequence(subsequence_name, config, args, save_name, camera_ma
     print(f'Done processing {subsequence_name}.')
 
 
-def process_cear_subsequence(subsequence_name, config, args, save_name, camera_matrix, distortion_coeffs, homography, converter):
+# def process_cear_subsequence(subsequence_name, config, args, save_name, camera_matrix, distortion_coeffs, homography, converter):
+#     """Process a subsequence for the CEAR dataset."""
+#     dataset_path = config['common']['dataset_path']
+#     repr_name = config['event_representation']['representation_name']
+#     num_events = config['common']['num_events'] if repr_name == 'event_stack' else None
+#     t_delta_s = config['common'].get('t_delta') if repr_name == 'voxel_grid' else None
+
+#     seq_root = os.path.join(dataset_path, subsequence_name)
+#     out_path = os.path.join(seq_root, 'events', save_name)
+#     os.makedirs(out_path, exist_ok=True)
+#     print("dataset_path", dataset_path)
+#     print("seq_root:", seq_root)
+#     print("out_path:", out_path)
+
+
+#     gt_path = os.path.join('config/misc/cear/gt_tracks', f'{subsequence_name}.gt.txt')
+#     gt_tracks = np.genfromtxt(gt_path)  # [id, t, x, y]
+#     timestamps_us = (1e6 * np.unique(gt_tracks[:, 1])).astype(np.int64)
+
+#     if args.use_rectified:
+#         events_path = os.path.join(seq_root, 'events_corrected.h5')
+#     else:
+#         events_path = os.path.join(seq_root, 'events.h5')
+#     print("events_path", events_path)
+#     with h5py.File(events_path, 'r') as f:
+#         x = f['x']
+#         y = f['y']
+#         t = f['t'][:]
+#         p = f['p']
+#         ev_indices = np.searchsorted(t, timestamps_us)
+#         for time, ev_index in tqdm(zip(timestamps_us, ev_indices), total=len(timestamps_us),
+#                                   desc=subsequence_name):
+#             if repr_name == 'event_stack':
+#                 i_start = max(ev_index - num_events, 0)
+#             elif repr_name == 'voxel_grid':
+#                 t_delta = t_delta_s * 1e6  # Convert to microseconds
+#                 t_start = time - t_delta
+#                 i_start = np.searchsorted(t, t_start)
+#             else:
+#                 raise ValueError(f'Unknown representation name: {repr_name}')
+            
+#             events = np.stack([y[i_start:ev_index], x[i_start:ev_index],
+#                               t[i_start:ev_index], p[i_start:ev_index]], axis=1)
+#             ev_repr = converter(events)
+
+#             if not args.use_rectified:
+#                 ev_repr = undistort_voxel_representation(ev_repr, camera_matrix,
+#                                                        distortion_coeffs)
+#                 ev_repr = warp_voxel_representation(ev_repr, homography)
+
+#             np.save(os.path.join(out_path, f'{time}.npy'), ev_repr)
+    
+#     print(f'Done processing {subsequence_name}.')
+
+def process_cear_subsequence(subsequence_name, config, args, save_name,
+                             camera_matrix, distortion_coeffs, homography, converter):
     """Process a subsequence for the CEAR dataset."""
     dataset_path = config['common']['dataset_path']
     repr_name = config['event_representation']['representation_name']
@@ -174,44 +229,94 @@ def process_cear_subsequence(subsequence_name, config, args, save_name, camera_m
     print("seq_root:", seq_root)
     print("out_path:", out_path)
 
-
-    gt_path = os.path.join('config/misc/cear/gt_tracks', f'{subsequence_name}.gt.txt')
-    gt_tracks = np.genfromtxt(gt_path)  # [id, t, x, y]
-    timestamps_us = (1e6 * np.unique(gt_tracks[:, 1])).astype(np.int64)
-
+    # Open events HDF5 first (we need t[] even if GT is empty)
     if args.use_rectified:
         events_path = os.path.join(seq_root, 'events_corrected.h5')
     else:
         events_path = os.path.join(seq_root, 'events.h5')
     print("events_path", events_path)
+
     with h5py.File(events_path, 'r') as f:
-        x = f['x']
+        x = f['x']          # h5 datasets (lazy)
         y = f['y']
-        t = f['t'][:]
+        t = f['t'][:]       # load timestamps into memory (int64 µs)
         p = f['p']
+
+        # 1) Load GT timestamps (if available)
+        gt_path = os.path.join('config/misc/cear/gt_tracks', f'{subsequence_name}.gt.txt')
+        timestamps_us = None
+        try:
+            gt_tracks = np.genfromtxt(gt_path)  # [id, t, x, y] where t is in seconds
+            # Handle file with a single line vs multiple lines
+            if gt_tracks.size == 0:
+                print(f"GT file empty: {gt_path}. Falling back to full-stream processing.")
+            else:
+                gt_tracks = np.atleast_2d(gt_tracks)
+                timestamps_us = (1e6 * np.unique(gt_tracks[:, 1])).astype(np.int64)
+        except Exception as e:
+            print(f"Could not read GT file '{gt_path}' ({e}). Falling back to full-stream processing.")
+
+        # 2) If no GT timestamps, build them from the event stream
+        if timestamps_us is None or len(timestamps_us) == 0:
+            if len(t) == 0:
+                print("No events found; nothing to process.")
+                return
+            if repr_name == 'event_stack':
+                if num_events is None or num_events <= 0:
+                    raise ValueError("For 'event_stack', config['common']['num_events'] must be > 0.")
+                # Non-overlapping windows of num_events
+                # Use the last event index of each window as boundary
+                ev_indices = np.arange(num_events, len(t) + 1, num_events, dtype=np.int64)
+                timestamps_us = t[ev_indices - 1]
+            elif repr_name == 'voxel_grid':
+                if t_delta_s is None or t_delta_s <= 0:
+                    raise ValueError("For 'voxel_grid', config['common']['t_delta'] must be > 0.")
+                t_delta_us = int(round(t_delta_s * 1e6))
+                # Start at first full window end
+                start_time = int(t[0]) + t_delta_us
+                end_time = int(t[-1])
+                if start_time > end_time:
+                    # very short stream: do a single frame at the end
+                    timestamps_us = np.array([int(t[-1])], dtype=np.int64)
+                else:
+                    timestamps_us = np.arange(start_time, end_time + 1, t_delta_us, dtype=np.int64)
+            else:
+                raise ValueError(f"Unknown representation name: {repr_name}")
+
+        # 3) Precompute indices into t for each timestamp_us
         ev_indices = np.searchsorted(t, timestamps_us)
-        for time, ev_index in tqdm(zip(timestamps_us, ev_indices), total=len(timestamps_us),
-                                  desc=subsequence_name):
+
+        # 4) Iterate and build representations
+        for time_us, ev_index in tqdm(zip(timestamps_us, ev_indices),
+                                      total=len(timestamps_us),
+                                      desc=subsequence_name):
             if repr_name == 'event_stack':
                 i_start = max(ev_index - num_events, 0)
             elif repr_name == 'voxel_grid':
-                t_delta = t_delta_s * 1e6  # Convert to microseconds
-                t_start = time - t_delta
+                t_delta_us = int(round(t_delta_s * 1e6))
+                t_start = int(time_us) - t_delta_us
                 i_start = np.searchsorted(t, t_start)
             else:
                 raise ValueError(f'Unknown representation name: {repr_name}')
-            
-            events = np.stack([y[i_start:ev_index], x[i_start:ev_index],
-                              t[i_start:ev_index], p[i_start:ev_index]], axis=1)
+
+            if ev_index <= i_start:
+                # Not enough events in this window; skip gracefully
+                continue
+
+            # Stack as [y, x, t, p] (match your converter’s expected order)
+            events = np.stack([y[i_start:ev_index],
+                               x[i_start:ev_index],
+                               t[i_start:ev_index],
+                               p[i_start:ev_index]], axis=1)
+
             ev_repr = converter(events)
 
             if not args.use_rectified:
-                ev_repr = undistort_voxel_representation(ev_repr, camera_matrix,
-                                                       distortion_coeffs)
+                ev_repr = undistort_voxel_representation(ev_repr, camera_matrix, distortion_coeffs)
                 ev_repr = warp_voxel_representation(ev_repr, homography)
 
-            np.save(os.path.join(out_path, f'{time}.npy'), ev_repr)
-    
+            np.save(os.path.join(out_path, f'{int(time_us)}.npy'), ev_repr)
+
     print(f'Done processing {subsequence_name}.')
 
 def process_ec_subsequence(subsequence_name, config, converter):
@@ -691,3 +796,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+# python scripts/prepare_event_representations.py --dataset cear --config config/exe/prepare_event_representations/cear.yaml --use_rectified

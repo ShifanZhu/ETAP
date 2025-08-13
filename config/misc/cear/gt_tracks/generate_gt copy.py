@@ -44,12 +44,12 @@ def generate_event_data(
 
 
 if __name__ == "__main__":
-    start_timestamp = 1704749406.99
-    num_lines = 2000            # number of timestamps per feature
-    num_features = 1         # number of unique IDs
+    start_timestamp = 1704749445.580231
+    num_lines = 200            # number of timestamps per feature
+    num_features = 20         # number of unique IDs
     uv_min = 0
     uv_max = 200
-    time_step = 0.005
+    time_step = 0.013
     smooth = True
     step_std = 2.0
     seed = 42

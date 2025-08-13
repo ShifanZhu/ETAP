@@ -64,24 +64,68 @@ class FeatureTrackingInferenceDataset(torch.utils.data.Dataset):
         assert preprocessed_name is not None, 'online processing of raw events not supported.'
         self.preprocessed_name = preprocessed_name
 
+        # Load preprocessed event representations (and any timestamps it returns)
         events_path = os.path.join(self.seq_root, 'events', preprocessed_name)
         self.samples, gt_ts_for_sanity_check = self.load_event_representations(events_path)
 
-        gt_path = os.path.join('config/misc', os.path.basename(os.path.normpath(data_root)), 'gt_tracks', f'{subsequence_name}.gt.txt')
-        gt_tracks = np.genfromtxt(gt_path)  # [id, t, x, y]
-        self.gt_tracks = torch.from_numpy(self.reformat_tracks(gt_tracks)).float()
+        # ---- Robust GT loading ----
+        gt_path = os.path.join('config/misc',
+                              os.path.basename(os.path.normpath(data_root)),
+                              'gt_tracks',
+                              f'{subsequence_name}.gt.txt')
 
-        self.gt_times_s = np.unique(gt_tracks[:, 1])
-        self.gt_times_us = (1e6 * self.gt_times_s).astype(int)
-        # assert np.allclose(gt_ts_for_sanity_check, self.gt_times_us)
+        self.gt_tracks = None
+        self.gt_times_s = None
+        self.gt_times_us = None
 
+        if os.path.exists(gt_path):
+            try:
+                gt_tracks = np.genfromtxt(gt_path)  # expected columns: [id, t(sec), x, y]
+                # Normalize shape: empty -> size 0; single-row -> (4,) -> make (1,4)
+                if gt_tracks.size > 0:
+                    gt_tracks = np.atleast_2d(gt_tracks)
+                    # Keep times in seconds from GT
+                    self.gt_times_s = np.unique(gt_tracks[:, 1].astype(float))
+                    self.gt_times_us = (1e6 * self.gt_times_s).astype(np.int64)
+
+                    # Build torch GT tracks in your preferred format
+                    self.gt_tracks = torch.from_numpy(self.reformat_tracks(gt_tracks)).float()
+                else:
+                    print(f"⚠ Ground truth file '{gt_path}' is empty. Falling back to sample timestamps.")
+            except Exception as e:
+                print(f"⚠ Could not read '{gt_path}' ({e}). Falling back to sample timestamps.")
+        else:
+            print(f"⚠ Ground truth file '{gt_path}' not found. Falling back to sample timestamps.")
+
+        # ---- Fallback when GT is missing/empty ----
+        if self.gt_tracks is None:
+            # Prefer timestamps returned by load_event_representations if provided
+            if gt_ts_for_sanity_check is not None and len(gt_ts_for_sanity_check) > 0:
+                self.gt_times_us = np.asarray(gt_ts_for_sanity_check, dtype=np.int64)
+            else:
+                # Otherwise, derive timestamps from samples (e.g., filenames or metadata)
+                # Expect each sample to carry a timestamp_us; adapt if your structure differs
+                try:
+                    self.gt_times_us = np.asarray(
+                        [s.timestamp_us for s in self.samples], dtype=np.int64
+                    )
+                except Exception:
+                    # Last-resort fallback: sequential indices as pseudo-timestamps
+                    self.gt_times_us = np.arange(len(self.samples), dtype=np.int64)
+
+            # No GT coordinates—let upstream provide seeds at runtime (e.g., via LCM)
+            self.gt_tracks = None
+            self.gt_times_s = self.gt_times_us.astype(np.float64) / 1e6
+            self.query_points = None
+        else:
+            # With GT: build default query points from the first GT time
+            N = self.gt_tracks.shape[1]
+            query_xy = self.gt_tracks[0, :]                 # [N, 2]
+            query_t = torch.zeros(N, dtype=torch.int64, device=query_xy.device)
+            self.query_points = torch.cat([query_t[:, None], query_xy], dim=-1)  # [N,3]
+
+        # Indices for sliding/strided iteration
         self.start_indices = np.arange(0, len(self.gt_times_us), stride)
-
-        # Queries
-        N = self.gt_tracks.shape[1]
-        query_xy = self.gt_tracks[0, :]
-        query_t = torch.zeros(N, dtype=torch.int64, device=query_xy.device)
-        self.query_points = torch.cat([query_t[:, None], query_xy], dim=-1)
 
     def __len__(self):
         return len(self.start_indices)

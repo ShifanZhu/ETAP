@@ -8,7 +8,8 @@ common:
 data:
   data_root: data/
   dataset_name: cear
-  preprocessed_name: event_stack_v1
+  preprocessed_name: voxel_grid_v1
+  # preprocessed_name: event_stack_v1
 
 model:
   num_in_channels: 10

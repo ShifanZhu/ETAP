@@ -233,7 +233,7 @@ class LcmBridge:
             msg.feature_y = list(map(float, ys))
 
             self.lc.publish(self.upd_topic, msg.encode())
-            print(f"Published update: {len(ids)} features at {ts_us}μs at topic '{self.upd_topic}'")
+            print(f"Published update: {len(ids)} features at {ts_us}μs")
         except Exception as e:
             print(f"✗ Error publishing update: {e}")
 
@@ -461,235 +461,169 @@ def main():
             start_us = int(msg.start_time_us) - int(args.window_margin_us)
             end_us   = int(msg.end_time_us)   + int(args.window_margin_us)
             if DEBUG_PRINTS:
-                print(f"Window expanded to: [{start_us * 1e-6} - {end_us * 1e-6}] s")
-            print(f"🔄 Processing frames in window [{to_s(start_us):.6f} - {to_s(end_us):.6f}] seconds")
+                print(f"Window expanded to: [{start_us * 1e-6} .. {end_us * 1e-6}] s")
+            print(f"🔄 Processing frames in window [{to_s(start_us):.6f} .. {to_s(end_us):.6f}] seconds")
 
             # 4) MAIN PROCESSING
             # try:
             if dataset and not args.test_mode:
                 # Real dataset branch
                 print(" Processing real dataset...")
-            sample_all_voxels = []
-            sample_all_timestamps = []
+                for sample, start_idx in tqdm(dataset, desc=f'Processing {sequence_name}'):
+                # for sample in dataset:
+                    # print(f"Processing sample starting at index {start_idx}, sample: {sample}")
 
-            for sample, start_idx in tqdm(dataset, desc=f'Processing {sequence_name}'):
-                vox = sample.voxels
-                ts  = sample.timestamps
+                    voxels = sample.voxels.to(device) # data
+                    step = voxels.shape[0] // 2 # 4 = 8 // 2
 
-                # Boolean mask for timestamps within range
-                mask = (ts >= start_us * 1e-6) & (ts <= end_us * 1e-6)
 
-                if mask.any():
-                    sample_all_voxels.append(vox[mask])
-                    sample_all_timestamps.append(ts[mask])
+                    # voxels = sample.voxels
+                    # ts     = sample.timestamps
+                    # if voxels is None or ts is None:
+                    #     print(f"  ⚠ dataset[{start_idx}] missing voxels/timestamps — skipping")
+                    #     continue
 
-            # Combine after loop
-            if sample_all_voxels:
-                combined_voxels = torch.cat(sample_all_voxels, dim=0)
-                combined_timestamps = torch.cat(sample_all_timestamps, dim=0)
+                    # # --- your existing processing from here ---
+                    # voxels = voxels.to(device)
+                    # step = max(1, voxels.shape[0] // 2) # 4
 
-                if DEBUG_PRINTS:
-                    print(f"📦 Aggregated {combined_voxels.shape[0]} frames "
-                          f"in range [{combined_timestamps[0]:.6f} .. {combined_timestamps[-1]:.6f}] s")
+                    # ts_arr = torch.as_tensor(ts, dtype=torch.float32) if not torch.is_tensor(ts) else ts.to(torch.float32)
+                    # if ts_arr.numel() < step:
+                    #     if DEBUG_PRINTS:
+                    #         print(f"  ⚠ dataset[{start_idx}] not enough timestamps ({ts_arr.numel()} < {step}) — skipping")
+                    #     continue
+                      
+                      
+                    ts_chunk_s = sample.timestamps[-step:]
+                    ts_chunk_us = (ts_chunk_s * 1e6).round().long()
+                    # print(f"Processing chunk with timestamps: {ts_chunk_us.tolist()}")
 
-                # # Concatenate all accumulated samples
-                # combined_voxels = torch.cat(sample_all_voxels, dim=0)
-                # combined_timestamps = torch.cat(sample_all_timestamps, dim=0)
-
-                # if DEBUG_PRINTS:
-                #     print("Combined timestamps:", [f"{ts:.6f}" for ts in combined_timestamps])
-
-                # Normalize and send to tracker
-                # combined_voxels = normalize_voxels(combined_voxels).to(device)
-                # with torch.no_grad():
-                #     results = tracker(
-                #         video=combined_voxels[None],
-                #         queries=queries[None],
-                #         is_online=True,
-                #         iters=6
-                #     )
-
-                max_len = 8  # maximum frames per voxel chunk
-                print("original queries:", original_queries)
-
-                num_frames = combined_voxels.shape[0]
-                for chunk_start in range(0, num_frames, max_len):
-                    chunk_end = min(chunk_start + max_len, num_frames)
-
-                    voxel_chunk = combined_voxels[chunk_start:chunk_end]          # [T_chunk, ...]
-                    voxel_chunk = voxel_chunk.to(device)
-                    ts_chunk    = combined_timestamps[chunk_start:chunk_end]      # [T_chunk]
+                    # Skip chunks outside window
+                    if (ts_chunk_us[-1] < start_us) or (ts_chunk_us[0] > end_us):
+                        continue
 
                     if DEBUG_PRINTS:
-                        print(f"▶ Processing chunk {chunk_start//max_len + 1}: "
-                              f"{voxel_chunk.shape[0]} frames "
-                              f"[{ts_chunk[0]:.6f} .. {ts_chunk[-1]:.6f}] s")
+                        print("sample timestamps (s):", [f"{v:.6f}" for v in sample.timestamps.tolist()])
+                        print(f"  Processing chunk with timestamps (s): {[ts_chunk_s.tolist()]}")
+                        # print(f"  Processing chunk with timestamps (s): {[to_s(ts) for ts in ts_chunk_us.tolist()]}")
 
-                    # Normalize and send to tracker
-                    voxel_chunk = normalize_voxels(voxel_chunk)
+                    voxels = normalize_voxels(voxels)
+                    # print("queries before:", queries)
+
                     with torch.no_grad():
                         results = tracker(
-                            video=voxel_chunk[None],   # [1, T_chunk, ...]
-                            queries=queries[None],     # [1, N_total, 3]
+                            video=voxels[None],
+                            queries=queries[None],
                             is_online=True,
                             iters=6
                         )
-
-                    # ---- Update queries for next chunk ----
-                    cp = results['coords_predicted']   # possibly [1, T, N_total, 2] or [T, N_total, 2]
+                    coords_predicted = results['coords_predicted']
+                    vis_logits = results['vis_predicted']
+                    # Update queries with predicted results for next chunk
+                    # build [N,3] queries (time column set to 0)
+                    cp = coords_predicted
                     if cp.dim() == 4:
-                        cp = cp[0]                     # -> [T, N_total, 2]
+                        cp = cp[0]            # -> [T, N, 2]
                     elif cp.dim() != 3:
                         raise RuntimeError(f"Unexpected coords_predicted shape: {tuple(cp.shape)}")
 
-                    # If you used support queries earlier, exclude them from the update
+                    # (optional) drop support queries; keep only seed queries
                     seed_N = len(seed_ids) if 'seed_ids' in locals() else cp.shape[1]
-                    last_xy = cp[-1, :seed_N, :].to(torch.float32)   # [N_seed, 2]
+                    last_xy = cp[-1, :seed_N, :]         # [N, 2]
+                    queries = torch.cat([
+                        torch.zeros((last_xy.shape[0], 1), dtype=torch.float32, device=last_xy.device),  # [N,1]
+                        last_xy                                                                            # [N,2]
+                    ], dim=1)  # -> [N,3]
+                    # print("queries after:", queries)
+                    print("id: ", seed_ids)
+                    print("predicted:", last_xy)
+                    
+                    ids_out = seed_ids
+                    xs_out = last_xy[:, 0].detach().cpu().numpy().tolist()
+                    ys_out = last_xy[:, 1].detach().cpu().numpy().tolist()
+                    ts_us = int(ts_chunk_us[-1].item())
+                    print(f"Publishing update for time {to_s(ts_us):.6f} s")
+                    
 
-                    # Build new seed queries: [N_seed, 3] (t=0)
-                    new_seed_queries = torch.cat(
-                        [
-                            torch.zeros((last_xy.shape[0], 1), dtype=torch.float32, device=last_xy.device),
-                            last_xy
-                        ],
-                        dim=1
-                    )  # [N_seed, 3]
-                    queries = new_seed_queries
-                    print("Updated queries:", queries)
-                ids_out = seed_ids
-                xs_out = last_xy[:, 0].detach().cpu().numpy().tolist()
-                ys_out = last_xy[:, 1].detach().cpu().numpy().tolist()
-                num_features = 50
-                out_len = len(ids_out)
-                if out_len < num_features:
-                  pad_count = num_features - out_len
-                  ids_out += [0] * pad_count
-                  xs_out  += [0.0] * pad_count
-                  ys_out  += [0.0] * pad_count
-                else:
-                  ids_out = ids_out[:num_features]
-                  xs_out  = xs_out[:num_features]
-                  ys_out  = ys_out[:num_features]
-                ts_us = combined_timestamps[-1].item()*1e6
-                print("ids_out:", ids_out)
-                print("xs_out:", xs_out)
-                print("ys_out:", ys_out)
-                print(f"Publishing update for time {to_s(ts_us):.6f} s")
+                    lcm_bridge.publish_update(ts_us, ids_out, xs_out, ys_out)
+                    break
                 
 
-                lcm_bridge.publish_update(ts_us, ids_out, xs_out, ys_out)
-                
-                continue
+                    # Remove support queries if used
+                    if support_num_queries > 0:
+                        coords_predicted = coords_predicted[:, :, :-support_num_queries]
+                        vis_logits       = vis_logits[:, :, :-support_num_queries]
 
-                # # Reset accumulators for next batch
-                # sample_all_voxels = []
-                # sample_all_timestamps = []
-                # coords_predicted = results['coords_predicted']
-                # vis_logits = results['vis_predicted']
-                # # Update queries with predicted results for next chunk
-                # # build [N,3] queries (time column set to 0)
-                # cp = coords_predicted
-                # if cp.dim() == 4:
-                #     cp = cp[0]            # -> [T, N, 2]
-                # elif cp.dim() != 3:
-                #     raise RuntimeError(f"Unexpected coords_predicted shape: {tuple(cp.shape)}")
+                    coords_predicted = coords_predicted[0]  # [T, N, 2]
+                    vis_logits       = vis_logits[0]        # [T, N]
 
-                # # (optional) drop support queries; keep only seed queries
-                # seed_N = len(seed_ids) if 'seed_ids' in locals() else cp.shape[1]
-                # last_xy = cp[-1, :seed_N, :]         # [N, 2]
-                # queries = torch.cat([
-                #     torch.zeros((last_xy.shape[0], 1), dtype=torch.float32, device=last_xy.device),  # [N,1]
-                #     last_xy                                                                            # [N,2]
-                # ], dim=1)  # -> [N,3]
-                # # print("queries after:", queries)
-                # # print("id: ", seed_ids)
-                # print("predicted:", last_xy)
-                
-                # ids_out = seed_ids
-                # xs_out = last_xy[:, 0].detach().cpu().numpy().tolist()
-                # ys_out = last_xy[:, 1].detach().cpu().numpy().tolist()
-                # # ts_us = int(ts_chunk_us[-1].item())
-                # # print(f"Publishing update for time {to_s(ts_us):.6f} s")
-                
-
-                # lcm_bridge.publish_update(ts_us, ids_out, xs_out, ys_out)
-                break
-                
-                # Remove support queries if used
-                if support_num_queries > 0:
-                    coords_predicted = coords_predicted[:, :, :-support_num_queries]
-                    vis_logits       = vis_logits[:, :, :-support_num_queries]
-
-                coords_predicted = coords_predicted[0]  # [T, N, 2]
-                vis_logits       = vis_logits[0]        # [T, N]
-
-                Tcur = coords_predicted.shape[0]
-                min_len = min(Tcur, ts_chunk_s.shape[0], ts_chunk_us.shape[0])
-                print("min_len:", min_len)
-                if min_len <= 0:
-                    continue
-
-                # if DEBUG_PRINTS:
-                #     print("coords_predicted.shape:", coords_predicted.shape)
-
-                coords_predicted = coords_predicted[:min_len]
-                vis_logits       = vis_logits[:min_len]
-                ts_chunk_s       = ts_chunk_s[:min_len]
-                ts_chunk_us      = ts_chunk_us[:min_len]
-
-                # Keep frames inside the window for saving
-                frame_mask = (ts_chunk_us >= start_us) & (ts_chunk_us <= end_us)
-                if frame_mask.any():
-                    keep_idx   = torch.nonzero(frame_mask, as_tuple=False).squeeze(-1)
-                    coords_all.append(coords_predicted[keep_idx].cpu())
-                    vis_all.append(vis_logits[keep_idx].cpu())
-                    ts_all.append(ts_chunk_s[keep_idx].cpu())
-                    processed_any = True
-
-                # Stream results via LCM
-                for ti in range(min_len):
-                    ts_us = int(ts_chunk_us[ti].item())
-                    if ts_us < start_us or ts_us > end_us:
+                    Tcur = coords_predicted.shape[0]
+                    min_len = min(Tcur, ts_chunk_s.shape[0], ts_chunk_us.shape[0])
+                    print("min_len:", min_len)
+                    if min_len <= 0:
                         continue
 
-                    xy  = coords_predicted[ti].detach().cpu().numpy()
-                    vis = vis_logits[ti].detach().cpu().numpy()
+                    # if DEBUG_PRINTS:
+                    #     print("coords_predicted.shape:", coords_predicted.shape)
 
-                    if vis_thresh > 0.0:
-                        mask = vis >= vis_thresh
-                        if not mask.any():
+                    coords_predicted = coords_predicted[:min_len]
+                    vis_logits       = vis_logits[:min_len]
+                    ts_chunk_s       = ts_chunk_s[:min_len]
+                    ts_chunk_us      = ts_chunk_us[:min_len]
+
+                    # Keep frames inside the window for saving
+                    frame_mask = (ts_chunk_us >= start_us) & (ts_chunk_us <= end_us)
+                    if frame_mask.any():
+                        keep_idx   = torch.nonzero(frame_mask, as_tuple=False).squeeze(-1)
+                        coords_all.append(coords_predicted[keep_idx].cpu())
+                        vis_all.append(vis_logits[keep_idx].cpu())
+                        ts_all.append(ts_chunk_s[keep_idx].cpu())
+                        processed_any = True
+
+                    # Stream results via LCM
+                    for ti in range(min_len):
+                        ts_us = int(ts_chunk_us[ti].item())
+                        if ts_us < start_us or ts_us > end_us:
                             continue
-                        ids_out = [all_ids[i] for i, m in enumerate(mask) if m]
-                        xs_out  = [float(xy[i, 0]) for i, m in enumerate(mask) if m]
-                        ys_out  = [float(xy[i, 1]) for i, m in enumerate(mask) if m]
-                    else:
-                        ids_out = all_ids
-                        xs_out  = xy[:, 0].tolist()
-                        ys_out  = xy[:, 1].tolist()
 
-                    # Pad/clip to fixed length
-                    num_features = 50
-                    out_len = len(ids_out)
-                    if out_len < num_features:
-                        pad_count = num_features - out_len
-                        ids_out += [0] * pad_count
-                        xs_out  += [0.0] * pad_count
-                        ys_out  += [0.0] * pad_count
-                    else:
-                        ids_out = ids_out[:num_features]
-                        xs_out  = xs_out[:num_features]
-                        ys_out  = ys_out[:num_features]
+                        xy  = coords_predicted[ti].detach().cpu().numpy()
+                        vis = vis_logits[ti].detach().cpu().numpy()
 
-                    if DEBUG_PRINTS:
-                        # print(f"  Frame {ti}: ts={ts_us}, ids={ids_out}, xs={xs_out}, ys={ys_out}")
-                        # print("ids_out:", ids_out)
-                        # print("xs_out:", xs_out)
-                        # print("ys_out:", ys_out)
-                        print(f"id: {ids_out[0]}, x: {xs_out[0]:.4f}, y: {ys_out[0]:.4f}, at time: {to_s(ts_us):.6f}")
+                        if vis_thresh > 0.0:
+                            mask = vis >= vis_thresh
+                            if not mask.any():
+                                continue
+                            ids_out = [all_ids[i] for i, m in enumerate(mask) if m]
+                            xs_out  = [float(xy[i, 0]) for i, m in enumerate(mask) if m]
+                            ys_out  = [float(xy[i, 1]) for i, m in enumerate(mask) if m]
+                        else:
+                            ids_out = all_ids
+                            xs_out  = xy[:, 0].tolist()
+                            ys_out  = xy[:, 1].tolist()
 
-                    # Publish update
-                    print(f"Publishing update for frame at {to_s(ts_us):.6f} s")
-                    # lcm_bridge.publish_update(ts_us, ids_out, xs_out, ys_out)
+                        # Pad/clip to fixed length
+                        num_features = 50
+                        out_len = len(ids_out)
+                        if out_len < num_features:
+                            pad_count = num_features - out_len
+                            ids_out += [0] * pad_count
+                            xs_out  += [0.0] * pad_count
+                            ys_out  += [0.0] * pad_count
+                        else:
+                            ids_out = ids_out[:num_features]
+                            xs_out  = xs_out[:num_features]
+                            ys_out  = ys_out[:num_features]
+
+                        if DEBUG_PRINTS:
+                            # print(f"  Frame {ti}: ts={ts_us}, ids={ids_out}, xs={xs_out}, ys={ys_out}")
+                            # print("ids_out:", ids_out)
+                            # print("xs_out:", xs_out)
+                            # print("ys_out:", ys_out)
+                            print(f"id: {ids_out[0]}, x: {xs_out[0]:.4f}, y: {ys_out[0]:.4f}, at time: {to_s(ts_us):.6f}")
+
+                        # Publish update
+                        print(f"Publishing update for frame at {to_s(ts_us):.6f} s")
+                        # lcm_bridge.publish_update(ts_us, ids_out, xs_out, ys_out)
 
             else:
                 # Synthetic fallback / demo branch
