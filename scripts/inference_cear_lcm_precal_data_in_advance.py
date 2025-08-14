@@ -641,6 +641,150 @@ def _load_index(cache_root: Path, sequence_name: str):
     return _build_index(cache_root, sequence_name)
 
 
+from collections import OrderedDict
+
+class NpyWindowBuffer:
+    """
+    In-memory LRU buffer for .npy time-chunks.
+    Expects pairs named "<prefix>_ts.npy" (int64 µs, sorted) and "<prefix>_vox.npy" ([T,C,H,W]).
+    """
+
+    def __init__(self, cache_root: Path, sequence_name: str, max_ram_bytes: int = 2 * (1 << 30)):
+        self.root = Path(cache_root)
+        self.sequence = sequence_name
+        self.max_ram_bytes = int(max_ram_bytes)
+
+        self.index = self._build_index()   # sorted entries with (start_us, end_us, paths)
+        self.starts = [e["start_us"] for e in self.index]
+        self.ends   = [e["end_us"]   for e in self.index]
+
+        self._chunks = OrderedDict()       # key -> {"vox","ts_us","bytes","start","end"}
+        self._total_bytes = 0
+
+    # ---------- indexing ----------
+    def _build_index(self):
+        idx = []
+        roots = []
+        seq_dir = self.root / self.sequence
+        if seq_dir.exists():
+            roots.append(seq_dir)
+        roots.append(self.root)
+
+        seen = set()
+        for r in roots:
+            for ts_path in r.rglob("*_ts.npy"):
+                vox_path = ts_path.with_name(ts_path.name.replace("_ts.npy", "_vox.npy"))
+                if not vox_path.exists():
+                    continue
+                key = str(vox_path.resolve())
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                ts_mm = np.load(ts_path, mmap_mode="r")
+                if ts_mm.size == 0:
+                    continue
+                s = int(ts_mm[0])
+                e = int(ts_mm[-1])
+                idx.append({"start_us": s, "end_us": e,
+                            "vox_path": str(vox_path), "ts_path": str(ts_path)})
+        print(f"Found {len(idx)} npy file pairs for sequence '{self.sequence}' in '{self.root}'")
+        idx.sort(key=lambda d: d["start_us"])
+        return idx
+
+    def _overlapping_entries(self, start_us: int, end_us: int):
+        # first idx with end >= start_us
+        j = bisect_left(self.ends, start_us)
+        out = []
+        for k in range(j, len(self.index)):
+            e = self.index[k]
+            if e["start_us"] > end_us:
+                break
+            # overlap if not (end <= start or start >= end)
+            if not (e["end_us"] <= start_us or e["start_us"] >= end_us):
+                out.append(e)
+        return out
+
+    # ---------- LRU management ----------
+    def _touch(self, key: str):
+        if key in self._chunks:
+            self._chunks.move_to_end(key, last=True)
+
+    def _evict_if_needed(self):
+        while self._total_bytes > self.max_ram_bytes and self._chunks:
+            k, item = self._chunks.popitem(last=False)  # LRU
+            self._total_bytes -= item["bytes"]
+
+    def _load_chunk(self, entry):
+        key = entry["vox_path"]
+        if key in self._chunks:
+            self._touch(key)
+            return
+
+        # Fully load (no memmap) so subsequent requests are RAM-only
+        vox_np = np.load(entry["vox_path"])      # [T,C,H,W]
+        ts_np  = np.load(entry["ts_path"])       # [T] int64 µs
+
+        vox = torch.from_numpy(vox_np)           # CPU tensors
+        ts_us = torch.from_numpy(ts_np)
+
+        bytes_est = vox.element_size() * vox.numel() + ts_us.element_size() * ts_us.numel()
+        self._chunks[key] = {"vox": vox, "ts_us": ts_us,
+                             "bytes": int(bytes_est),
+                             "start": entry["start_us"], "end": entry["end_us"]}
+        self._total_bytes += bytes_est
+        self._touch(key)
+        self._evict_if_needed()
+
+    # ---------- public API ----------
+    def get_window(self, start_us: int, end_us: int):
+        """
+        Returns (voxels[T,C,H,W], timestamps_sec[T]) for [start_us, end_us] (inclusive end),
+        or (None, None) if nothing overlaps.
+        """
+        entries = self._overlapping_entries(start_us, end_us)
+        if not entries:
+            return None, None
+
+        # Ensure required chunks resident
+        for e in entries:
+            self._load_chunk(e)
+
+        vox_chunks, ts_chunks = [], []
+        start_t = torch.tensor(start_us, dtype=torch.long)
+        end_t   = torch.tensor(end_us,   dtype=torch.long)
+
+        for e in entries:
+            key = e["vox_path"]
+            item = self._chunks[key]
+            ts_us = item["ts_us"]
+            # inclusive end to match your previous logic
+            i0 = int(torch.searchsorted(ts_us, start_t, right=False))
+            i1 = int(torch.searchsorted(ts_us, end_t,   right=True))
+            if i1 <= i0:
+                continue
+            vox_chunks.append(item["vox"][i0:i1])
+            ts_chunks.append(ts_us[i0:i1])
+
+        if not vox_chunks:
+            return None, None
+
+        vox = torch.cat(vox_chunks, dim=0)
+        ts_us = torch.cat(ts_chunks, dim=0)
+
+        # sort + dedup (safety if multiple chunks overlap on boundaries)
+        order = torch.argsort(ts_us)
+        ts_us = ts_us.index_select(0, order)
+        vox   = vox.index_select(0, order)
+        keep = torch.ones_like(ts_us, dtype=torch.bool)
+        keep[1:] = ts_us[1:] != ts_us[:-1]
+        ts_us = ts_us[keep]
+        vox   = vox[keep]
+
+        ts_s = ts_us.to(torch.float64) * 1e-6
+        return vox, ts_s
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='config/exe/inference_online/feature_tracking_cear.yaml')
@@ -740,6 +884,10 @@ def main():
 
     viz = Visualizer(save_dir=save_dir, pad_value=0, linewidth=1,
                      tracks_leave_trace=-1, show_first_frame=5)
+
+    # Right after you set `save_dir` and `sequence_name` (before the LCM loop):
+    sequence_name = ''
+    buffer = NpyWindowBuffer(cache_root=save_dir, sequence_name=sequence_name, max_ram_bytes=2 * (1 << 30))
 
     # --- LCM integration ---
     lcm_cmd_topic = args.lcm_cmd_topic or config['common'].get('lcm_cmd_topic', 'TRACKING_COMMAND')
@@ -877,8 +1025,11 @@ def main():
             #       f"from {save_dir}")
 
             # combined_voxels, combined_timestamps = load_cached_window_fast(save_dir, sequence_name, start_us, end_us)
-            combined_voxels, combined_timestamps = load_cached_window_fast_npy(save_dir, sequence_name, start_us, end_us)
+            # combined_voxels, combined_timestamps = load_cached_window_fast_npy(save_dir, sequence_name, start_us, end_us)
             # combined_voxels, combined_timestamps  = load_cached_window_ori(save_dir, sequence_name, start_us, end_us)
+            
+            # new:
+            combined_voxels, combined_timestamps = buffer.get_window(start_us, end_us)
             if combined_voxels is None:
                 print("✗ No cached data covering this window. Skipping.")
                 continue
