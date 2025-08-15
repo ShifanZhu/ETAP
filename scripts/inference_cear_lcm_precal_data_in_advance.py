@@ -32,6 +32,7 @@ from src.utils import SUPPORTED_SEQUENCES_FEATURE_TRACKING
 import os, json, re
 from bisect import bisect_left, bisect_right
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue, Empty
 
 
 
@@ -116,6 +117,7 @@ class LcmBridge:
         self._pending_cmd: Optional[TrackingCommand] = None
         self._shutdown = False
         self._next_id = 10_000_000
+        self._queue: Queue[TrackingCommand] = Queue(maxsize=256)
 
         if LCM_AVAILABLE:
             try:
@@ -155,12 +157,15 @@ class LcmBridge:
                 raise e
 
     def _on_cmd_wrapper(self, channel: str, data: bytes):
-        """Wrapper to handle the callback safely"""
         try:
             msg = TrackingCommand.decode(data)
-            with self._lock:
-                self._pending_cmd = msg
-                print(f"✓ Received tracking message on {channel}")
+            # non-blocking: drop oldest if full to avoid deadlock
+            if self._queue.full():
+                try: self._queue.get_nowait()
+                except Empty: pass
+            self._queue.put_nowait(msg)
+            # (optional) logging
+            # print(f"✓ Received tracking message on {channel}")
         except Exception as e:
             print(f"✗ Error processing message: {e}")
 
@@ -177,12 +182,19 @@ class LcmBridge:
                     print(f"✗ LCM spin error: {e}")
                 break
 
-    def get_pending_request(self) -> Optional[TrackingCommand]:
+    # def get_pending_request(self) -> Optional[TrackingCommand]:
+    #     """Get any pending tracking message"""
+    #     with self._lock:
+    #         msg = self._pending_cmd
+    #         self._pending_cmd = None
+    #         return msg
+
+    def get_pending_request(self, timeout: Optional[float] = None) -> Optional[TrackingCommand]:
         """Get any pending tracking message"""
-        with self._lock:
-            msg = self._pending_cmd
-            self._pending_cmd = None
-            return msg
+        try:
+            return self._queue.get(timeout=timeout)
+        except Empty:
+            return None
 
     def publish_update(self, ts_us: int, ids: List[int], xs: List[float], ys: List[float]):
         """Publish a tracking update"""
@@ -194,7 +206,7 @@ class LcmBridge:
             msg.feature_y = list(map(float, ys))
 
             self.lc.publish(self.upd_topic, msg.encode())
-            print(f"Published update: {len(ids)} features at {ts_us}μs at topic '{self.upd_topic}'")
+            # print(f"Published update: {len(ids)} features at {ts_us}μs at topic '{self.upd_topic}'")
         except Exception as e:
             print(f"✗ Error publishing update: {e}")
 
@@ -793,7 +805,7 @@ def main():
     parser.add_argument('--lcm_cmd_topic', type=str, default=None)
     parser.add_argument('--lcm_upd_topic', type=str, default=None)
     # Window margin (us) to catch boundary frames
-    parser.add_argument('--window_margin_us', type=int, default=1_000)  # 1 ms
+    parser.add_argument('--window_margin_us', type=int, default=3_000)  # 3 ms
     parser.add_argument('--test_mode', action='store_true', help='Run with simulated publisher')
 
     args = parser.parse_args()
@@ -906,7 +918,8 @@ def main():
 
         simulate_publisher_command(lcm_bridge, points1, start_us1, end_us1, delay=1.0)
 
-    DEBUG_PRINTS = True  # flip to True for verbose prints
+    DEBUG_PRINTS = False  # flip to True for verbose prints
+    DEBUG_TIME_CONSUMPTION = False  # flip to True for verbose time consumption prints
     print(f"Current time0: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
@@ -925,17 +938,22 @@ def main():
 
         while True:
             iteration += 1
-            print(f"\n--- ITERATION {iteration}: {sequence_name} ---")
+            if DEBUG_PRINTS:
+                print(f"\n--- ITERATION {iteration}: {sequence_name} ---")
+            if DEBUG_TIME_CONSUMPTION:
+                print(f"Current time0: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
             # 1) Wait for LCM message
-            print(f" Waiting for LCM message on topic '{lcm_cmd_topic}'...")
+            # print(f" Waiting for LCM message on topic '{lcm_cmd_topic}'...")
             msg = None
             wait_timeout = 30.0
             wait_start = time.time()
+            
+            msg = lcm_bridge.get_pending_request(timeout=wait_timeout)
 
-            while msg is None and (time.time() - wait_start) < wait_timeout:
-                msg = lcm_bridge.get_pending_request()
-                time.sleep(0.01)
+            # while msg is None and (time.time() - wait_start) < wait_timeout:
+            #     msg = lcm_bridge.get_pending_request()
+            #     time.sleep(0.01)
 
             if msg is None:
                 print("Timeout waiting for message")
@@ -946,11 +964,12 @@ def main():
                     # Go back to waiting for the next message
                     continue
 
-            print(
-                f"Received message for '{sequence_name}': "
-                f"[{msg.start_time_us*1e-6} - {msg.end_time_us*1e-6}] s, "
-            )
-            print(f"Current time1: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            if DEBUG_PRINTS:
+                print(f"Received message for '{sequence_name}': "
+                      f"start_us: {msg.start_time_us*1e-6}, end_us: {msg.end_time_us*1e-6} s, "
+                )
+            if DEBUG_TIME_CONSUMPTION:
+                print(f"Current time1: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
             if (len(msg.feature_ids) != len(msg.feature_x)) or (len(msg.feature_ids) != len(msg.feature_y)):
                 raise ValueError("LCM TrackingCommand arrays must be the same length")
@@ -999,15 +1018,15 @@ def main():
             # Expand window by margin
             start_us = int(msg.start_time_us) - int(args.window_margin_us)
             end_us   = int(msg.end_time_us)   + int(args.window_margin_us)
-            if DEBUG_PRINTS:
-                print(f"Window expanded to: [{start_us * 1e-6} - {end_us * 1e-6}] s")
-                print(f"🔄 Processing frames in window [{to_s(start_us):.6f} - {to_s(end_us):.6f}] seconds")
+            # if DEBUG_PRINTS:
+            #     print(f"Window expanded to: [{start_us * 1e-6} - {end_us * 1e-6}] s")
+            #     print(f"🔄 Processing frames in window [{to_s(start_us):.6f} - {to_s(end_us):.6f}] seconds")
 
             # 4) MAIN PROCESSING
             # try:
-            if dataset and not args.test_mode:
-                # Real dataset branch
-                print(" Processing real dataset...")
+            # if dataset and not args.test_mode:
+            #     # Real dataset branch
+            #     print(" Processing real dataset...")
             sample_all_voxels = []
             sample_all_timestamps = []
 
@@ -1017,9 +1036,8 @@ def main():
 
 
 
-            print(f"Current time2: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-
-
+            if DEBUG_TIME_CONSUMPTION:
+                print(f"Current time2: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
             # print(f"📂 Loading cached frames for window [{to_s(start_us):.6f}, {to_s(end_us):.6f}] s "
             #       f"from {save_dir}")
@@ -1030,6 +1048,11 @@ def main():
             
             # new:
             combined_voxels, combined_timestamps = buffer.get_window(start_us, end_us)
+            if DEBUG_PRINTS:
+                print(f"Received message for [{combined_timestamps[0]:.6f} - {combined_timestamps[-1]:.6f}] s, total size: {combined_timestamps.shape[0]} frames.  "
+                      f"start_us: {msg.start_time_us*1e-6}, end_us: {msg.end_time_us*1e-6} s, ")
+
+    
             if combined_voxels is None:
                 print("✗ No cached data covering this window. Skipping.")
                 continue
@@ -1067,8 +1090,8 @@ def main():
 
 
 
-
-            print(f"Current time3: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+            if DEBUG_TIME_CONSUMPTION:
+                print(f"Current time3: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
             # continue
 
             # Combine after loop
@@ -1095,13 +1118,25 @@ def main():
                 if DEBUG_PRINTS:
                     print(f"▶ Processing chunk {chunk_start//max_len + 1}: "
                           f"{voxel_chunk.shape[0]} frames "
-                          f"[{ts_chunk[0]:.6f} .. {ts_chunk[-1]:.6f}] s")
-
-                print(f"Current time4: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                          f"[{ts_chunk[0]:.6f}, {ts_chunk[-1]:.6f}] s")
+                    print(f"Received message for '{sequence_name}': "
+                          f"start_us: {msg.start_time_us*1e-6}, end_us: {msg.end_time_us*1e-6} s, "
+                          f"[{ts_chunk[0]:.6f}, {ts_chunk[-1]:.6f}] s")
                 
+                start_diff = abs(to_s(msg.start_time_us) - ts_chunk[0].item())
+                end_diff = abs(to_s(msg.end_time_us) - ts_chunk[-1].item())
+                if start_diff > 0.003:
+                  print(f"⚠️ Warning: Start time difference is {start_diff:.6f} s (> 0.003 s)")
+                if end_diff > 0.003:
+                  print(f"⚠️ Warning: End time difference is {end_diff:.6f} s (> 0.003 s)")
+
+                if DEBUG_TIME_CONSUMPTION:
+                    print(f"Current time4: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+
                 # Normalize and send to tracker
                 voxel_chunk = normalize_voxels(voxel_chunk)
-                print(f"Current time5: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                if DEBUG_TIME_CONSUMPTION:
+                    print(f"Current time5: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
                 with torch.no_grad():
                     results = tracker(
                         video=voxel_chunk[None],   # [1, T_chunk, ...]
@@ -1109,7 +1144,8 @@ def main():
                         is_online=True,
                         iters=6
                     )
-                print(f"Current time6: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                if DEBUG_TIME_CONSUMPTION:
+                    print(f"Current time6: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
                 # ---- Update queries for next chunk ----
                 cp = results['coords_predicted']   # possibly [1, T, N_total, 2] or [T, N_total, 2]
@@ -1132,7 +1168,8 @@ def main():
                 )  # [N_seed, 3]
                 queries = new_seed_queries
                 # print("Updated queries:", queries)
-
+            if DEBUG_TIME_CONSUMPTION:
+                print(f"Current time7: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
             ids_out = seed_ids
             xs_out = last_xy[:, 0].detach().cpu().numpy().tolist()
@@ -1156,7 +1193,9 @@ def main():
             
 
             lcm_bridge.publish_update(ts_us, ids_out, xs_out, ys_out)
-            
+            if DEBUG_TIME_CONSUMPTION:
+                print(f"Current time8: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+
             continue
 
     finally:

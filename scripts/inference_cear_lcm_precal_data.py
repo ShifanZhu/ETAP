@@ -778,6 +778,7 @@ def main():
         while True:
             iteration += 1
             print(f"\n--- ITERATION {iteration}: {sequence_name} ---")
+            print(f"Current time0: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
             # 1) Wait for LCM message
             print(f" Waiting for LCM message on topic '{lcm_cmd_topic}'...")
@@ -802,7 +803,7 @@ def main():
                 f"Received message for '{sequence_name}': "
                 f"[{msg.start_time_us*1e-6} - {msg.end_time_us*1e-6}] s, "
             )
-            print(f"Current time1: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"Current time1: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
             if (len(msg.feature_ids) != len(msg.feature_x)) or (len(msg.feature_ids) != len(msg.feature_y)):
                 raise ValueError("LCM TrackingCommand arrays must be the same length")
@@ -981,6 +982,7 @@ def main():
                 )  # [N_seed, 3]
                 queries = new_seed_queries
                 # print("Updated queries:", queries)
+            print(f"Current time7: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
 
             ids_out = seed_ids
@@ -1005,6 +1007,7 @@ def main():
             
 
             lcm_bridge.publish_update(ts_us, ids_out, xs_out, ys_out)
+            print(f"Current time8: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
             
             continue
 
