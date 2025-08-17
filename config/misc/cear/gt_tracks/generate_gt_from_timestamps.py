@@ -109,7 +109,8 @@ if __name__ == "__main__":
         seed=seed
     )
 
-    output_file = "mocap1_well-lit_trot.gt.txt"
+    # output_file = "mocap1_well-lit_trot.gt.txt"
+    output_file = "between_buildings_day_trot.gt.txt"
     with open(output_file, "w") as f:
         for i, line in enumerate(events):
             # if (i+1) % 2 == 0:

@@ -799,7 +799,7 @@ class NpyWindowBuffer:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='config/exe/inference_online/feature_tracking_cear.yaml')
+    parser.add_argument('--config', type=str, default='config/exe/inference_online/feature_tracking_cear****.yaml')
     parser.add_argument('--device', type=str, default='cuda:0')
     # LCM overrides (optional – can also be set in config['common'])
     parser.add_argument('--lcm_cmd_topic', type=str, default=None)

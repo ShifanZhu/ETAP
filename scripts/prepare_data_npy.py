@@ -398,10 +398,117 @@ def save_cache_npy(cache_dir: Path, name: str, start_us: int, end_us: int,
         print(f"   meta   -> {meta_path}")
 
 
+# def collect_window_half_open(dataset, start_us: int, end_us: int, debug: bool = False):
+#     """
+#     Collect frames with timestamps in [start_us, end_us) (microseconds).
+#     Dedups within the collected slice and returns (voxels, timestamps_sec).
+#     """
+#     start_s = start_us * 1e-6
+#     end_s   = end_us   * 1e-6
+
+#     sample_all_voxels, sample_all_timestamps = [], []
+#     append_vox = sample_all_voxels.append
+#     append_ts  = sample_all_timestamps.append
+
+#     frames_collected = 0
+#     last_ts_s: Optional[float] = None  # avoid overlap duplicates within a sample
+
+#     for sample, _ in dataset:
+#         ts = sample.timestamps  # 1D sorted
+#         print(f"ts: {ts.tolist() if hasattr(ts, 'tolist') else ts}")
+#         vox = sample.voxels
+
+#         if torch.is_tensor(ts):
+#             ts_cpu = ts.cpu() if ts.device.type != "cpu" else ts
+#             ts_cpu = ts_cpu.reshape(-1)
+
+#             ts0 = float(ts_cpu[0]); ts1 = float(ts_cpu[-1])
+            
+#             if ts1 <= start_s:   # note: <= because end is exclusive
+#                 continue
+#             if ts0 >= end_s:
+#                 break
+
+#             i0 = int(torch.searchsorted(ts_cpu, torch.tensor(start_s, dtype=ts_cpu.dtype), right=False))
+#             # end is EXCLUSIVE:
+#             i1 = int(torch.searchsorted(ts_cpu, torch.tensor(end_s,   dtype=ts_cpu.dtype), right=False))
+
+#             if last_ts_s is not None:
+#                 i_skip = int(torch.searchsorted(ts_cpu, torch.tensor(last_ts_s, dtype=ts_cpu.dtype), right=True))
+#                 if i_skip > i0:
+#                     i0 = i_skip
+
+#             if i1 <= i0:
+#                 continue
+
+#             append_vox(vox[i0:i1])
+#             append_ts(ts_cpu[i0:i1])
+#             frames_collected += (i1 - i0)
+#             last_ts_s = float(ts_cpu[i1 - 1])
+
+#         else:
+#             ts_np = np.asarray(ts).reshape(-1)
+#             ts0 = float(ts_np[0]); ts1 = float(ts_np[-1])
+
+#             if ts1 <= start_s:
+#                 continue
+#             if ts0 >= end_s:
+#                 break
+
+#             i0 = int(np.searchsorted(ts_np, start_s, side='left'))
+#             # end is EXCLUSIVE:
+#             i1 = int(np.searchsorted(ts_np, end_s,   side='left'))
+
+#             if last_ts_s is not None:
+#                 i_skip = int(np.searchsorted(ts_np, last_ts_s, side='right'))
+#                 if i_skip > i0:
+#                     i0 = i_skip
+
+#             if i1 <= i0:
+#                 continue
+
+#             append_vox(vox[i0:i1])
+#             append_ts(torch.from_numpy(ts_np[i0:i1]))
+#             frames_collected += (i1 - i0)
+#             last_ts_s = float(ts_np[i1 - 1])
+
+#     if not sample_all_voxels:
+#         if debug:
+#             print("No frames collected in interval.")
+#         return None, None
+
+#     combined_voxels = torch.cat(sample_all_voxels, dim=0)
+#     combined_timestamps = torch.cat(sample_all_timestamps, dim=0)  # seconds (torch)
+
+#     # sort + de-dup at microsecond precision (robust against sample overlap)
+#     ts_us = (combined_timestamps * 1e6).round().to(torch.long)
+#     order = torch.argsort(ts_us)
+#     ts_us = ts_us.index_select(0, order)
+#     combined_voxels = combined_voxels.index_select(0, order)
+
+#     keep = torch.ones_like(ts_us, dtype=torch.bool)
+#     keep[1:] = ts_us[1:] != ts_us[:-1]
+#     ts_us = ts_us[keep]
+#     combined_voxels = combined_voxels[keep]
+#     combined_timestamps = ts_us.to(torch.float64) * 1e-6  # seconds
+
+#     if debug:
+#         print("Combined timestamps:", [f"{float(t):.6f}" for t in combined_timestamps])
+#         print(f"📦 Aggregated {combined_voxels.shape[0]} unique frames "
+#               f"in range [{combined_timestamps[0]:.6f} - {combined_timestamps[-1]:.6f}) s")
+#     return combined_voxels, combined_timestamps
+
+import os
+import numpy as np
+import torch
+from typing import Optional
+
 def collect_window_half_open(dataset, start_us: int, end_us: int, debug: bool = False):
     """
     Collect frames with timestamps in [start_us, end_us) (microseconds).
     Dedups within the collected slice and returns (voxels, timestamps_sec).
+
+    Skips missing files without raising an error.
     """
     start_s = start_us * 1e-6
     end_s   = end_us   * 1e-6
@@ -413,7 +520,19 @@ def collect_window_half_open(dataset, start_us: int, end_us: int, debug: bool = 
     frames_collected = 0
     last_ts_s: Optional[float] = None  # avoid overlap duplicates within a sample
 
-    for sample, _ in dataset:
+    # Iterate using index so we can catch missing files cleanly
+    for idx in range(len(dataset)):
+        try:
+            sample, _ = dataset[idx]
+        except FileNotFoundError as e:
+            if debug:
+                print(f"⚠️ Skipping missing file: {e.filename}")
+            continue
+        except Exception as e:
+            if debug:
+                print(f"⚠️ Skipping index {idx} due to error: {e}")
+            continue
+
         ts = sample.timestamps  # 1D sorted
         vox = sample.voxels
 
@@ -422,13 +541,12 @@ def collect_window_half_open(dataset, start_us: int, end_us: int, debug: bool = 
             ts_cpu = ts_cpu.reshape(-1)
 
             ts0 = float(ts_cpu[0]); ts1 = float(ts_cpu[-1])
-            if ts1 <= start_s:   # note: <= because end is exclusive
+            if ts1 <= start_s:
                 continue
             if ts0 >= end_s:
                 break
 
             i0 = int(torch.searchsorted(ts_cpu, torch.tensor(start_s, dtype=ts_cpu.dtype), right=False))
-            # end is EXCLUSIVE:
             i1 = int(torch.searchsorted(ts_cpu, torch.tensor(end_s,   dtype=ts_cpu.dtype), right=False))
 
             if last_ts_s is not None:
@@ -444,7 +562,7 @@ def collect_window_half_open(dataset, start_us: int, end_us: int, debug: bool = 
             frames_collected += (i1 - i0)
             last_ts_s = float(ts_cpu[i1 - 1])
 
-        else:
+        else:  # numpy timestamps
             ts_np = np.asarray(ts).reshape(-1)
             ts0 = float(ts_np[0]); ts1 = float(ts_np[-1])
 
@@ -454,7 +572,6 @@ def collect_window_half_open(dataset, start_us: int, end_us: int, debug: bool = 
                 break
 
             i0 = int(np.searchsorted(ts_np, start_s, side='left'))
-            # end is EXCLUSIVE:
             i1 = int(np.searchsorted(ts_np, end_s,   side='left'))
 
             if last_ts_s is not None:
@@ -478,7 +595,7 @@ def collect_window_half_open(dataset, start_us: int, end_us: int, debug: bool = 
     combined_voxels = torch.cat(sample_all_voxels, dim=0)
     combined_timestamps = torch.cat(sample_all_timestamps, dim=0)  # seconds (torch)
 
-    # sort + de-dup at microsecond precision (robust against sample overlap)
+    # sort + de-dup at microsecond precision
     ts_us = (combined_timestamps * 1e6).round().to(torch.long)
     order = torch.argsort(ts_us)
     ts_us = ts_us.index_select(0, order)
@@ -498,7 +615,7 @@ def collect_window_half_open(dataset, start_us: int, end_us: int, debug: bool = 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='config/exe/inference_online/feature_tracking_cear.yaml')
+    parser.add_argument('--config', type=str, default='config/exe/inference_online/feature_tracking_cear***.yaml')
     parser.add_argument('--device', type=str, default='cuda:0')
     # LCM overrides (optional – can also be set in config['common'])
     parser.add_argument('--lcm_cmd_topic', type=str, default=None)

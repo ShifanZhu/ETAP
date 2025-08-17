@@ -1,0 +1,18 @@
+common:
+  exp_name: feature_tracking_cear_davis346
+  ckp_path: weights/ETAP_v1_cvpr25.pth
+  add_support_points: false
+  height: 260
+  width: 346
+
+data:
+  data_root: data/
+  dataset_name: cear
+  preprocessed_name: voxel_grid_v1
+  # preprocessed_name: event_stack_v1
+
+model:
+  num_in_channels: 10
+  stride: 4
+  window_len: 8
+  num_virtual_tracks: 64

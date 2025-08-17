@@ -1,0 +1,18 @@
+common:
+  dataset_path: data/cear
+  num_events: 100000
+  height: 260
+  width: 346
+  save_prefix: v1
+  t_delta: 0.005 # 33 ms
+  
+event_representation:
+  representation_name: voxel_grid
+  num_bins: 10
+
+
+  # representation_name: event_stack
+  # num_stacks: 10
+  # interpolation: bilinear
+  # channel_overlap: true
+  # centered_channels: false

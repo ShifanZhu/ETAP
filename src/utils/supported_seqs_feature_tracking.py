@@ -14,6 +14,7 @@ SUPPORTED_SEQUENCES_FEATURE_TRACKING = {
         'shapes_translation'
     ],
     'cear': [
-        'mocap1_well-lit_trot'
+        # 'mocap1_well-lit_trot'
+        'between_buildings_day_trot'
     ]
 }
