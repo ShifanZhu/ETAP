@@ -81,7 +81,8 @@ def generate_event_data_from_timestamps(
 
 if __name__ == "__main__":
     # Path to your timestamp list
-    timestamp_file = "realsense_timestamp.txt"  # <-- change if needed
+    # timestamp_file = "realsense_timestamp_kitchen_hdr_comb.txt"  # <-- change if needed
+    timestamp_file = "realsense_timestamp_mocap1_blinking_comb.txt"  # <-- change if needed
     if not os.path.exists(timestamp_file):
         raise FileNotFoundError(f"Cannot find {timestamp_file}")
 
@@ -110,7 +111,8 @@ if __name__ == "__main__":
     )
 
     # output_file = "mocap1_well-lit_trot.gt.txt"
-    output_file = "between_buildings_day_trot.gt.txt"
+    # output_file = "between_buildings_day_trot.gt.txt"
+    output_file = "mocap1_blinking_comb.gt.txt"
     with open(output_file, "w") as f:
         for i, line in enumerate(events):
             # if (i+1) % 2 == 0:

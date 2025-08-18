@@ -16,5 +16,7 @@ SUPPORTED_SEQUENCES_FEATURE_TRACKING = {
     'cear': [
         # 'mocap1_well-lit_trot'
         'between_buildings_day_trot'
+        # 'kitchen_hdr_comb'
+        # 'mocap1_blinking_comb'
     ]
 }
